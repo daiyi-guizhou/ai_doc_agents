@@ -1,0 +1,5 @@
+# Obsidian 个人配置（不进仓库，避免污染文档）
+.obsidian/
+
+# 自动生成的巡检报告（由 tools/inspect.py 产出）
+docs/.reports/

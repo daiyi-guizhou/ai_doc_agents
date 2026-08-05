@@ -1,0 +1,33 @@
+#!/bin/sh
+# pre-commit hook —— 在每次 git commit 前运行 doclint --strict，守住文档秩序。
+#
+# 安装方式（任选其一）：
+#   方式 A（推荐，整目录托管所有 hook）：
+#     git config core.hooksPath tools/hooks
+#   方式 B（仅安装本 hook）：
+#     cp tools/hooks/pre-commit .git/hooks/pre-commit
+#     chmod +x .git/hooks/pre-commit
+#
+# 行为：doclint 发现 error 或（--strict 下的）warning 时，退出非零，阻止本次提交。
+# 若环境中没有 python，hook 会放行（warn-only），不会卡死你的提交流程。
+
+set -e
+
+# 找到可用的 python 解释器（覆盖 Linux/macOS 的 python3、Windows 的 python / py 启动器）
+PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || command -v py 2>/dev/null || true)"
+if [ -z "$PY" ]; then
+  echo "⚠️  未找到 python（python3/python），跳过 doclint 校验。" >&2
+  exit 0
+fi
+
+# 切到仓库根目录（git 调用 hook 时 cwd 已是工作树顶层，这里再保险一次）
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT"
+
+echo "🔍 doclint: 校验 docs/ 文档秩序（--strict）..."
+if "$PY" tools/doclint.py docs --strict; then
+  echo "✅ doclint 通过，秩序良好。"
+else
+  echo "❌ doclint 发现问题，提交已阻止。请修复后再 commit。" >&2
+  exit 1
+fi
