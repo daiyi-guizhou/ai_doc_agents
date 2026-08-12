@@ -18,7 +18,7 @@ import sys
 from datetime import date, datetime
 
 REQUIRED_FIELDS = ["title", "type", "owner", "status", "updated"]
-VALID_TYPES = {"adr", "rfc", "design", "api", "runbook", "guide", "spec", "meeting", "index"}
+VALID_TYPES = {"adr", "rfc", "design", "api", "runbook", "guide", "spec", "meeting", "agent", "index"}
 VALID_STATUS = {"draft", "review", "stale", "active", "deprecated"}
 EXEMPT_NAMES = {"README.md", "_template.md"}
 

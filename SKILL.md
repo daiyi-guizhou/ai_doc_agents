@@ -35,6 +35,7 @@ Obsidian 负责可视化与双向链接，git pre-commit 在提交前拦住不�
 | `guides/` | guide | How-to / onboarding | `kebab-slug.md` |
 | `specs/` | spec | 需求 / PRD | `kebab-slug.md` |
 | `meetings/` | meeting | 会议纪要 | `YYYY-MM-DD-kebab-slug.md` |
+| `agents/` | agent | 多 Agent 框架角色提示词（Pod 系统提示词来源，详见 `docs/agents/README.md`） | `kebab-slug.md`（角色名） |
 | `archive/` | deprecated | 已废弃内容的归宿（仅隔离不删） | 保持原名 |
 | `.reports/` | — | inspect 生成的巡检报告（gitignore） | `inspection-YYYYMMDD.md` |
 

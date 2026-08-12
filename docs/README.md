@@ -19,6 +19,7 @@
 | `guides/` | `guide` | How-to：新人 onboarding、常见操作流程 | `kebab-slug.md` |
 | `specs/` | `spec` | 需求 / PRD（按版本或功能归） | `kebab-slug.md` |
 | `meetings/` | `meeting` | 会议纪要 | `YYYY-MM-DD-kebab-slug.md` |
+| `agents/` | `agent` | 多 Agent 框架角色提示词（Pod 系统提示词来源，详见 `docs/agents/README.md`） | `kebab-slug.md`（角色名） |
 | `archive/` | `deprecated` | 已废弃内容的归宿（**不删除**，仅隔离） | 保持原名 |
 
 > 每个子目录下的 `README.md` 是该目录的索引页，新文档进来先在此登记。

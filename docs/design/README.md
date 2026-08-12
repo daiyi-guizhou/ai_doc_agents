@@ -18,3 +18,7 @@ updated: 2026-08-05
 - 大系统可在本目录下再建子目录（如 `design/modules/`）
 
 登记新文档时在此追加一行链接。
+
+## 已登记文档
+
+- [[multi-agent-pod-framework|多 Agent Pod 框架设计]]
