@@ -23,3 +23,4 @@ ADR 一旦 `active` 就**不要改写历史**，推翻旧决策请新开一篇 A
 - [[docs/adr/0001-adopt-markdown-and-adr-for-doc-governance|ADR-0001: 采用 Markdown + ADR 做本地文档治理]]
 - [[docs/adr/0002-adopt-multi-agent-pod-framework|ADR-0002: 采用多 Agent Pod 框架编排需求到复盘]]
 - [[docs/adr/0003-sandbox-and-llm-orchestrator|ADR-0003: 引入沙箱执行与 LLM 动态编排]]
+- [[docs/adr/0004-documenter-doclint-gate|ADR-0004: 写文档的 Agent 接入 doclint 产出校验]]

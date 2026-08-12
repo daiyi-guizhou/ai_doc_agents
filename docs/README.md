@@ -123,6 +123,6 @@ cp tools/hooks/pre-commit .git/hooks/pre-commit
 chmod +x .git/hooks/pre-commit
 ```
 > 若环境中没有 python，钩子会放行（仅告警），不会卡死你的提交流程。
-> 当前项目尚未 `git init`；若希望启用，先 `git init` 再执行上述安装命令即可。
+> 本项目已 `git init` 并配置 `core.hooksPath tools/hooks`，提交时 doclint 守门自动生效；如未激活，执行 `git config core.hooksPath tools/hooks` 即可。
 
 > 全部规则由 `project-doc-manager` 技能固化，跨会话一致。

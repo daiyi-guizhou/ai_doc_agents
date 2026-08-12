@@ -6,11 +6,14 @@
          输出一个决策（next / rollback / done + role），由模型决定走向，而非固定顺序。
          Mock 模式用确定性状态机兜底，行为等价于旧管线（保证离线可验证）。
 
-七阶段（角色目录 + 兜底顺序）：
-  requirement-analyst 需求分析 / system-designer 概要设计 / developer 开发 /
+七阶段（角色目录 + 兜底顺序，--doc 时于概要设计后插入 documenter）：
+  requirement-analyst 需求分析 / system-designer 概要设计 /
+  documenter 文档撰写(可选) / developer 开发 /
   tester 测试 / deployer 部署 / verifier 验证 / retrospector 复盘
 
 安全网（无论模型如何决定都生效）：
+  - 文档校验闸门：documenter 产出须过 doclint（frontmatter/type/status/死链），
+    error 级即 FAIL → 退回 documenter 重做并附反馈，连续超 DOCLINT_MAX_RETRY 判失败。
   - 门禁阶段（tester/deployer/verifier）FAIL → 回退到 developer 重做。
   - 模型请求 done 前，必须已有一次 验证 PASS，否则强制重跑验证。
   - MAX_ITER 上限防死循环；超次判定任务失败。
@@ -20,8 +23,8 @@ import re
 from . import prompts
 from .llm import MockLLM
 
-# 七个阶段（role, 中文标签）——作为角色目录与兜底顺序
-STAGES = [
+# 基础阶段（不含文档撰写）；run(doc=True) 时于 system-designer 后插入 documenter
+BASE_STAGES = [
     ("requirement-analyst", "需求分析"),
     ("system-designer", "概要设计"),
     ("developer", "开发"),
@@ -30,14 +33,23 @@ STAGES = [
     ("verifier", "验证"),
     ("retrospector", "复盘"),
 ]
+DOC_STAGE = ("documenter", "文档撰写")   # 写文档的 agent：产出须经 doclint 闸门
+
+# 模块级默认（无 --doc），供 CLI/工具直接引用
+STAGES = BASE_STAGES
 ROLE_LABEL = dict(STAGES)
 ORDER = [r for r, _ in STAGES]
+
 GATE_ROLES = {"tester", "deployer", "verifier"}   # 门禁阶段
 ROLLBACK_TARGET = "developer"                       # 门禁失败回退点
 MAX_ITER = 16
 
 # 拥有真实执行能力（沙箱）的角色
 SANDBOX_ROLES = {"developer", "tester"}
+
+# 文档治理闸门：这些角色的产出须经 doclint 校验，不通过则退回重做
+DOCLINT_ROLES = {"documenter"}
+DOCLINT_MAX_RETRY = 3        # 连续不通过上限，超过判任务失败
 
 # 决策协议：模型在产出中给出恰好一个 decision 块
 DECISION_FENCE = re.compile(r"```decision\s*(.*?)```", re.DOTALL | re.IGNORECASE)
@@ -48,7 +60,7 @@ _DECISION_INSTR = """\
 你必须输出**恰好一个**决策，用如下 fenced 块：
 
 ```decision
-{"action": "next", "role": "developer"}
+{"action": "next", "role": "system-designer"}
 ```
 
 action 取值：
@@ -57,9 +69,11 @@ action 取值：
 - "done"    : 任务已完成（须先确保『验证 PASS』且『复盘完成』）
 
 约束：
-- role 必须取自：requirement-analyst / system-designer / developer / tester / deployer / verifier / retrospector
+- role 必须取自：{roles}
 - 必须向『验证通过 + 复盘完成』收敛，禁止无意义地重复同一阶段
 - 门禁阶段（tester/deployer/verifier）若上次为 FAIL，应 rollback 到 developer 重做
+- 写文档阶段（documenter）若上次文档校验 FAIL，应 redo documenter 并参考反馈改稿
+
 只输出该 decision 块，不要多余解释。"""
 
 
@@ -105,10 +119,24 @@ class Orchestrator:
             return "无（非门禁阶段）"
         return "PASS" if ok else "FAIL"
 
+    # ---------------- 阶段装配 ----------------
+    @staticmethod
+    def _build_stages(doc: bool):
+        """装配本次任务使用的阶段顺序；doc=True 时在概要设计后插入文档撰写。"""
+        stages = list(BASE_STAGES)
+        if doc:
+            i = next(idx for idx, (r, _) in enumerate(stages) if r == "system-designer")
+            stages.insert(i + 1, DOC_STAGE)
+        return stages
+
+    @staticmethod
+    def _build_decision_instr(order):
+        return _DECISION_INSTR.format(roles=" / ".join(order))
+
     # ---------------- 决策：真实 LLM ----------------
-    def _decide(self, requirement, ctx, last_role, last_output, last_gate_ok):
+    def _decide(self, requirement, ctx, last_role, last_output, last_gate_ok, order, role_label):
         summary = ctx[-4000:]
-        last_name = ROLE_LABEL.get(last_role, last_role) if last_role else "（首次）"
+        last_name = role_label.get(last_role, last_role) if last_role else "（首次）"
         user = (
             f"原始需求：{requirement}\n\n"
             f"当前任务上下文（最近片段）：\n{summary}\n\n"
@@ -117,11 +145,12 @@ class Orchestrator:
             f"上一阶段产出片段：\n{last_output[:1200]}\n\n"
             f"请输出下一步决策（仅一个 ```decision 块）。"
         )
-        text = self.llm.complete(system=self._base_prompt + "\n\n" + _DECISION_INSTR, user=user)
-        return self._parse_decision(text)
+        text = self.llm.complete(
+            system=self._base_prompt + "\n\n" + self._build_decision_instr(order), user=user)
+        return self._parse_decision(text, order)
 
     @staticmethod
-    def _parse_decision(text):
+    def _parse_decision(text, order):
         m = DECISION_FENCE.search(text or "")
         if not m:
             return None
@@ -133,38 +162,46 @@ class Orchestrator:
         if not isinstance(d, dict) or d.get("action") not in ("next", "rollback", "done"):
             return None
         role = d.get("role")
-        if d["action"] != "done" and role not in ORDER:
+        if d["action"] != "done" and role not in order:
             return None
         return d
 
     # ---------------- 决策：Mock 状态机（等价于旧管线 + 回退） ----------------
     @staticmethod
-    def _mock_decide(last_role, last_gate_ok, pos):
+    def _mock_decide(last_role, last_gate_ok, pos, order):
         if last_role is None:
-            return "next", ORDER[0]
+            return "next", order[0]
         if last_role == "retrospector":
             return "done", None
         if last_role in GATE_ROLES and last_gate_ok is False:
             return "rollback", ROLLBACK_TARGET
         npos = (pos + 1) if pos >= 0 else 0
-        return "next", ORDER[npos]
+        return "next", order[npos]
 
     @staticmethod
-    def _fallback(last_role, last_gate_ok, pos):
+    def _fallback(last_role, last_gate_ok, pos, order):
         if last_role in GATE_ROLES and last_gate_ok is False:
             return "rollback", ROLLBACK_TARGET
         if last_role == "retrospector":
             return "done", None
         npos = (pos + 1) if pos >= 0 else 0
-        if npos < len(ORDER):
-            return "next", ORDER[npos]
+        if npos < len(order):
+            return "next", order[npos]
         return "done", None
 
     # ---------------- 主循环 ----------------
-    def run(self, requirement: str, use_sandbox: bool = True) -> "Job":
+    def run(self, requirement: str, use_sandbox: bool = True, doc: bool = False) -> "Job":
         from .job import Job
+        from .doclint_check import DocLint
+
+        stages = self._build_stages(doc)
+        order = [r for r, _ in stages]
+        role_label = dict(stages)
+
         job = Job(requirement, with_sandbox=use_sandbox)
         job.note("Orchestrator(LLM-agent) 启动，需求：" + requirement)
+        if doc:
+            job.note("文档撰写阶段已启用：documenter 产出须通过 doclint 校验闸门")
         if use_sandbox:
             job.note("沙箱已启用：developer/tester 将真实读写文件、跑命令")
         if isinstance(self.llm, MockLLM):
@@ -180,6 +217,8 @@ class Orchestrator:
         seq = 0
         verify_passed = False
         iters = 0
+        force_redo_role = None          # doclint 闸门触发：强制重做某角色
+        doclint_retries = {}            # role -> 连续不通过次数
 
         while True:
             iters += 1
@@ -187,20 +226,28 @@ class Orchestrator:
                 job.fail(f"超过最大迭代次数({MAX_ITER})，任务未收敛")
                 break
 
-            # 1) 决策
-            if isinstance(self.llm, MockLLM):
-                action, role = self._mock_decide(last_role, last_gate_ok, pos)
+            # 1) 决策（doclint 强制重做优先覆盖）
+            if force_redo_role is not None:
+                action, role, redo = "next", force_redo_role, True
+                force_redo_role = None
+                job.note(f"文档校验未通过 → 强制重做：{role_label[role]}")
+            elif isinstance(self.llm, MockLLM):
+                action, role = self._mock_decide(last_role, last_gate_ok, pos, order)
+                redo = False
             else:
-                dec = self._decide(requirement, ctx, last_role, last_output, last_gate_ok)
+                dec = self._decide(requirement, ctx, last_role, last_output,
+                                   last_gate_ok, order, role_label)
                 if dec is None:
                     job.note("决策解析失败，启用兜底逻辑")
-                    action, role = self._fallback(last_role, last_gate_ok, pos)
+                    action, role = self._fallback(last_role, last_gate_ok, pos, order)
                 else:
                     action, role = dec["action"], dec.get("role")
+                redo = False
 
             # 2) 安全网：门禁 FAIL 强制回退，覆盖模型决策（确保「活干好」）
             if last_role in GATE_ROLES and last_gate_ok is False:
                 action, role = "rollback", ROLLBACK_TARGET
+                redo = True
                 job.note("门禁 FAIL，强制回退到开发重做（覆盖模型决策）")
 
             # 3) 质量闸门：done 前必须验证通过
@@ -208,17 +255,18 @@ class Orchestrator:
                 if not verify_passed:
                     job.note("请求 done 但验证尚未 PASS，强制重跑验证")
                     action, role = "next", "verifier"
+                    redo = False
                 else:
                     break  # 任务完成
 
             # 4) 非法角色兜底
-            if role not in ORDER:
+            if role not in order:
                 job.note(f"决策角色非法：{role}，启用兜底")
-                action, role = self._fallback(last_role, last_gate_ok, pos)
+                action, role = self._fallback(last_role, last_gate_ok, pos, order)
+                redo = False
 
             # 5) 执行该阶段 Pod
-            label = ROLE_LABEL[role]
-            redo = (action == "rollback")
+            label = role_label[role]
             pod = self.scheduler.spawn(role)
             sandbox = job.sandbox if role in SANDBOX_ROLES else None
             try:
@@ -234,7 +282,30 @@ class Orchestrator:
             ctx += f"\n## {label}（{role}）产出\n{output}\n"
             job.note(f"阶段完成：{label}（{role}）" + (" [回退重做]" if redo else ""))
 
-            # 6) 门禁判定，回填决策上下文
+            # 6) 文档校验闸门（仅 DOCLINT_ROLES）
+            if role in DOCLINT_ROLES:
+                lint = DocLint().validate_text(output, filename=f"{role}.md")
+                if not lint.ok:
+                    doclint_retries[role] = doclint_retries.get(role, 0) + 1
+                    n = doclint_retries[role]
+                    ctx += f"\n（文档校验：FAIL - {lint.summary}）\n"
+                    job.note(f"文档校验 FAIL：{lint.summary}（第 {n} 次）")
+                    if n > DOCLINT_MAX_RETRY:
+                        job.fail(f"{label} 文档校验连续 {DOCLINT_MAX_RETRY} 次不通过，任务失败")
+                        break
+                    # 退回重做，把反馈喂给 agent 改稿
+                    ctx += f"\n## 文档校验反馈（请据此改稿后重交）\n{lint.feedback}\n"
+                    force_redo_role = role
+                    last_role = role
+                    pos = order.index(role)
+                    last_output = output
+                    last_gate_ok = None
+                    continue   # 下一轮强制重做该角色
+                ctx += f"\n（文档校验：PASS - {lint.summary}）\n"
+                job.note(f"文档校验 PASS（{lint.summary}）")
+                doclint_retries[role] = 0
+
+            # 7) 门禁判定，回填决策上下文
             if role in GATE_ROLES:
                 last_gate_ok = self._gate(label, output)
                 verdict = "PASS" if last_gate_ok else "FAIL"
@@ -243,12 +314,12 @@ class Orchestrator:
                     verify_passed = True
                 job.note(f"{label} 门禁：{verdict}")
                 if not last_gate_ok:
-                    job.note(f"{label} 未通过，将回退到 {ROLE_LABEL[ROLLBACK_TARGET]} 重做")
+                    job.note(f"{label} 未通过，将回退到 {role_label[ROLLBACK_TARGET]} 重做")
             else:
                 last_gate_ok = None
 
             last_role = role
-            pos = ORDER.index(role)
+            pos = order.index(role)
             last_output = output
 
         if job.state == "running":

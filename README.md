@@ -38,6 +38,7 @@ PY="C:/Users/18862/.workbuddy/binaries/python/versions/3.13.12/python.exe"
 $PY -m agents roles                        # 列出可用角色（来自 docs/agents）
 $PY -m agents run "做一个命令行待办工具"    # 真实 LLM（需配置 .env）
 $PY -m agents run --mock "..."             # 离线 Mock 跑通编排与生命周期
+$PY -m agents run --mock --doc "..."       # 额外启用「文档撰写」阶段（产出过 doclint 闸门）
 $PY -m agents run --mock --no-sandbox "..." # 关闭沙箱（dev/tester 退回纯文本）
 ```
 
@@ -61,9 +62,9 @@ $PY -m agents run --mock --no-sandbox "..." # 关闭沙箱（dev/tester 退回�
 配置样例见 `.env.example`（复制为 `.env` 后填写）。
 
 ### 文档与角色
-- 角色提示词：`docs/agents/`（共 8 篇：orchestrator + 7 个阶段角色）
+- 角色提示词：`docs/agents/`（共 9 篇：orchestrator + 8 个阶段角色；其中 `documenter` 由 `--doc` 启用）
 - 框架设计：`docs/design/multi-agent-pod-framework.md`
-- 决策记录：`docs/adr/0002-adopt-multi-agent-pod-framework.md`
+- 决策记录：`docs/adr/0002-adopt-multi-agent-pod-framework.md`、`docs/adr/0004-documenter-doclint-gate.md`
 
 ---
 

@@ -6,6 +6,7 @@ import json
 import urllib.request
 import urllib.error
 import os
+from datetime import date
 
 
 class LLM:
@@ -57,6 +58,28 @@ class MockLLM(LLM):
     def complete(self, system: str, user: str, temperature: float = 0.3,
                  max_tokens: int = 2000) -> str:
         prompt_head = system.strip().splitlines()[0] if system.strip() else "(无提示词)"
+        # 写文档的 agent：产出一篇符合 doclint 规则的受治理文档（供校验闸门使用）
+        if "文档撰写" in system or "角色：documenter" in user or "documenter" in user:
+            today = date.today().isoformat()
+            return (
+                f"---\n"
+                f"title: 待办工具设计文档（documenter 模拟产出）\n"
+                f"type: design\n"
+                f"owner: AI\n"
+                f"status: draft\n"
+                f"review_cycle: 90d\n"
+                f"tags: [design, mock]\n"
+                f"updated: {today}\n"
+                f"---\n\n"
+                f"# 待办工具设计文档\n\n"
+                f"本设计由 documenter 基于需求与概要设计产出，覆盖核心模块与接口契约。\n\n"
+                f"## 模块\n"
+                f"- CLI 入口：解析子命令与参数\n"
+                f"- 存储：本地 JSON 文件持久化待办项\n\n"
+                f"## 接口契约\n"
+                f"- `add(task)` 新增；`done(id)` 完成；`list()` 列出\n\n"
+                f"相关框架设计：[[design/multi-agent-pod-framework|多 Agent Pod 框架设计]]\n"
+            )
         return (
             f"[MOCK] 角色首行提示词：{prompt_head[:70]}\n"
             f"[MOCK] 收到任务：{user.strip()[:200]}\n"

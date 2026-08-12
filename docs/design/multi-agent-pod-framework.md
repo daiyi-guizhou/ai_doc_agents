@@ -29,14 +29,15 @@ updated: 2026-08-12
 | 调度器 | `agents/scheduler.py` | 管理 Pod 生命周期与并发上限 |
 | Job | `agents/job.py` | 任务状态机 + 产物落 `agent_runs/<jobid>/` |
 | 总控 | `agents/orchestrator.py` | LLM agent：动态决定下一阶段（决策协议 + 门禁 + 回退） |
+| 文档校验 | `agents/doclint_check.py` | 把「写文档的 agent」产出交给 `tools/doclint.py` 单篇校验；error 级即 FAIL |
 | 沙箱 | `agents/sandbox.py` | developer/tester 的真实执行隔离区：文件 I/O + 白名单命令 + 超时 |
 | 工具协议 | `agents/tools.py` | 解析/执行模型的 actions 块（write_file/read_file/list_dir/run） |
 | CLI | `agents/cli.py` | `python -m agents run / roles`，含 `--mock`/`--no-sandbox` |
 
 ## 3. 流水线（Orchestrator 动态编排 + 门禁回退）
-七个阶段作为角色目录与兜底顺序：
+七个阶段作为角色目录与兜底顺序（加 `--doc` 时在「概要设计」后插入「文档撰写」）：
 ```
-需求分析 → 概要设计 → 开发 → 测试 → 部署 → 验证 → 复盘
+需求分析 → 概要设计 →[文档撰写]→ 开发 → 测试 → 部署 → 验证 → 复盘
                          ↑_________(FAIL 回退)_________↑
 ```
 - **Orchestrator 是 LLM agent**：每轮读取累积上下文 + 上一阶段门禁结果，输出决策
@@ -44,6 +45,10 @@ updated: 2026-08-12
   由模型动态决定走向，而非写死顺序。Mock 模式用确定性状态机兜底，行为等价于旧管线。
 - 门禁阶段：**测试 / 部署 / 验证**，产出须含 `通过/失败` 或 `PASS/FAIL`。
 - 门禁 FAIL → 回退到「开发」重做（开发→测试→部署→验证）。
+- **文档校验闸门（DOCLINT_ROLES = {documenter}）**：`--doc` 时，文档撰写阶段的产出
+  立即交给 `tools/doclint.py` 单篇校验（frontmatter / type / status / 死链）。
+  error 级即 FAIL → 把反馈退回 documenter 重做，连续超 `DOCLINT_MAX_RETRY=3` 次判任务失败。
+  这把「agent 写出来的文档」和「人维护的文档」约束到同一把尺子（见 `agents/doclint_check.py`）。
 - 安全网：请求 `done` 前必须已有一次 验证 PASS（否则强制重跑验证）；
   全局迭代上限 `MAX_ITER=16`，防死循环。
 - **验证 PASS 且 复盘完成** → 任务「活干好」。
@@ -51,8 +56,9 @@ updated: 2026-08-12
 ## 4. 提示词来源（SSOT）
 `docs/agents/` 下每篇 `<role>.md` = 一个角色，frontmatter(`type:agent`)+正文=系统提示词。
 新增/调整角色只改文档，框架 `spawn` 时加载，无需改代码。角色与阶段一一对应：
-`requirement-analyst / system-designer / developer / tester / deployer / verifier / retrospector`，
-外加 `orchestrator`（总控策略文档，用于注入初始上下文）。
+`requirement-analyst / system-designer / documenter / developer / tester / deployer / verifier / retrospector`，
+外加 `orchestrator`（总控策略文档，用于注入初始上下文）。其中 `documenter` 为可选阶段，
+由 `--doc` 启用，其产出须通过 doclint 校验闸门。
 
 ## 5. 产物落库（独立于文档治理）
 每次任务在 `agent_runs/<jobid>/` 写入：
@@ -78,7 +84,9 @@ python -m agents run --mock "..."            # 离线 Mock 跑通
 ## 8. 后续扩展
 - ✅ developer/tester 接沙箱（`agents/sandbox.py` + `agents/tools.py`）：真实读写文件、跑命令，路径穿越/越权/超时三重隔离。
 - ✅ Orchestrator 升级为 LLM agent（`decision` 协议动态决定 next/rollback/done），Mock 状态机兜底。
-- 接 `tools/doclint.py` 做「写文档的 agent」产出校验；接 `inspect.py` 巡检。
+- ✅ 接 `tools/doclint.py` 做「写文档的 agent」产出校验：新增 `documenter` 角色（`--doc` 启用），
+  `agents/doclint_check.py` 把其产出单篇校验，error 级即 FAIL → 退回重做，见 `docs/adr/0004-documenter-doclint-gate.md`。
+- 接 `inspect.py` 巡检。
 - 用 `docs/adr/` 记录重大架构变更，用 `docs/runbooks/` 沉淀排障手册。
 
 ## 相关文档

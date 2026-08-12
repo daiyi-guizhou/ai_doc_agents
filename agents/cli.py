@@ -21,6 +21,8 @@ def _build_parser():
     run_p = sub.add_parser("run", help="发起一次任务（需求 → 7 阶段 → 复盘）")
     run_p.add_argument("requirement", help="用自然语言描述的需求")
     run_p.add_argument("--mock", action="store_true", help="强制使用 Mock LLM（离线）")
+    run_p.add_argument("--doc", action="store_true",
+                       help="启用文档撰写阶段（documenter 产出须过 doclint 校验）")
     run_p.add_argument("--max-iter", type=int, default=12, help="最大阶段迭代次数")
     run_p.add_argument("--no-sandbox", action="store_true",
                        help="关闭沙箱（developer/tester 退回纯文本生成）")
@@ -59,8 +61,9 @@ def main(argv=None):
     orch = Orchestrator(scheduler)
 
     use_sandbox = not args.no_sandbox
-    print(f"[agents] 模式={mode}  沙箱={'开' if use_sandbox else '关'}  需求={args.requirement}")
-    job = orch.run(args.requirement, use_sandbox=use_sandbox)
+    print(f"[agents] 模式={mode}  沙箱={'开' if use_sandbox else '关'}  "
+          f"文档阶段={'开' if args.doc else '关'}  需求={args.requirement}")
+    job = orch.run(args.requirement, use_sandbox=use_sandbox, doc=args.doc)
 
     print("\n" + "=" * 56)
     print(f"Job {job.job_id}  状态={job.state}")

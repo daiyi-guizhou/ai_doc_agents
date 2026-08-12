@@ -17,6 +17,7 @@ updated: 2026-08-12
 ## 角色与阶段映射
 - [[requirement-analyst|需求分析]] — 需求拆解与验收标准
 - [[system-designer|概要设计]] — 架构与模块设计
+- [[documenter|文档撰写]] — 产出受治理文档（须过 doclint 闸门，`--doc` 启用）
 - [[developer|开发]] — 编码实现
 - [[tester|测试]] — 用例与质量门禁
 - [[deployer|部署]] — 上线与回滚
