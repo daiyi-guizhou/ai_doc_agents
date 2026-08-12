@@ -26,6 +26,23 @@ updated: 2026-08-12
 - 严格遵循上游设计，不擅自改架构；如需调整，先说明影响
 - 代码要可被「测试」阶段直接验证（提供可执行的验证方式）
 
+## 沙箱能力（真实执行）
+当 Orchestrator 为本次任务启用沙箱时，你（除生成文本外）拥有**真实执行**能力：
+在回复中以一个 `actions` fenced 块声明动作，系统会在沙箱内按序执行并回填结果。
+典型用法：
+
+```actions
+[
+  {"action": "write_file", "path": "solution.py", "content": "<完整代码>"},
+  {"action": "run", "cmd": ["python", "solution.py"], "timeout": 30}
+]
+```
+
+支持动作：`write_file` / `read_file` / `list_dir` / `run`。
+约束：路径相对沙箱根、禁止越界；`run` 仅限白名单可执行文件（python / node / pytest / git 等），
+由 `agents/sandbox.py` 强制隔离与超时。默认请**真正落盘代码并跑通**，而非只给片段。
+
 ## 相关文档
 - 上游设计：[[system-designer|概要设计]]
 - 框架设计：[[design/multi-agent-pod-framework|多 Agent Pod 框架设计]]
+- 沙箱实现：见 `agents/sandbox.py` 与 `agents/tools.py`

@@ -12,7 +12,7 @@ from datetime import datetime
 
 
 class Job:
-    def __init__(self, requirement: str, runs_root: str = "agent_runs"):
+    def __init__(self, requirement: str, runs_root: str = "agent_runs", with_sandbox: bool = True):
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         self.job_id = f"{stamp}-{str(uuid.uuid4())[:4]}"
         self.requirement = requirement
@@ -23,6 +23,14 @@ class Job:
         self.created = datetime.now().isoformat(timespec="seconds")
         self.dir = os.path.join(runs_root, self.job_id)
         os.makedirs(self.dir, exist_ok=True)
+        # 每个 Job 拥有独立沙箱（随任务产物留存，便于复盘检查真实执行痕迹）
+        if with_sandbox:
+            from .sandbox import Sandbox
+            self.sandbox_root = os.path.join(self.dir, "sandbox")
+            self.sandbox = Sandbox(self.sandbox_root)
+        else:
+            self.sandbox_root = None
+            self.sandbox = None
 
     def record(self, idx: int, label: str, role: str, output: str):
         self.stages.append({

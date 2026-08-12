@@ -28,17 +28,24 @@ updated: 2026-08-12
 | Pod | `agents/pod.py` | 无状态 worker：`run(task, context)` 一次即销毁 |
 | 调度器 | `agents/scheduler.py` | 管理 Pod 生命周期与并发上限 |
 | Job | `agents/job.py` | 任务状态机 + 产物落 `agent_runs/<jobid>/` |
-| 总控 | `agents/orchestrator.py` | 7 阶段编排、门禁、回退 |
-| CLI | `agents/cli.py` | `python -m agents run / roles` |
+| 总控 | `agents/orchestrator.py` | LLM agent：动态决定下一阶段（决策协议 + 门禁 + 回退） |
+| 沙箱 | `agents/sandbox.py` | developer/tester 的真实执行隔离区：文件 I/O + 白名单命令 + 超时 |
+| 工具协议 | `agents/tools.py` | 解析/执行模型的 actions 块（write_file/read_file/list_dir/run） |
+| CLI | `agents/cli.py` | `python -m agents run / roles`，含 `--mock`/`--no-sandbox` |
 
-## 3. 流水线（固定管线 + 门禁回退）
+## 3. 流水线（Orchestrator 动态编排 + 门禁回退）
+七个阶段作为角色目录与兜底顺序：
 ```
 需求分析 → 概要设计 → 开发 → 测试 → 部署 → 验证 → 复盘
                          ↑_________(FAIL 回退)_________↑
 ```
+- **Orchestrator 是 LLM agent**：每轮读取累积上下文 + 上一阶段门禁结果，输出决策
+  `next / rollback / done + role`（见 `agents/orchestrator.py` 的 `decision` 协议），
+  由模型动态决定走向，而非写死顺序。Mock 模式用确定性状态机兜底，行为等价于旧管线。
 - 门禁阶段：**测试 / 部署 / 验证**，产出须含 `通过/失败` 或 `PASS/FAIL`。
 - 门禁 FAIL → 回退到「开发」重做（开发→测试→部署→验证）。
-- 全局迭代上限 `MAX_ITER=12`，防死循环。
+- 安全网：请求 `done` 前必须已有一次 验证 PASS（否则强制重跑验证）；
+  全局迭代上限 `MAX_ITER=16`，防死循环。
 - **验证 PASS 且 复盘完成** → 任务「活干好」。
 
 ## 4. 提示词来源（SSOT）
@@ -49,7 +56,8 @@ updated: 2026-08-12
 
 ## 5. 产物落库（独立于文档治理）
 每次任务在 `agent_runs/<jobid>/` 写入：
-- `NN-<role>.md` 各阶段产出
+- `NN-<role>.md` 各阶段产出（developer/tester 含「沙箱执行记录」）
+- `sandbox/` developer/tester 真实写出的文件与命令执行痕迹（随任务留存，便于复盘）
 - `state.json` 状态机快照
 - `SUMMARY.md` 全文汇总
 该目录已加入 `.gitignore`（运行时产物，与 docs 治理分离）。
@@ -68,8 +76,8 @@ python -m agents run --mock "..."            # 离线 Mock 跑通
 > 注：用托管 Python 运行：`C:/Users/18862/.workbuddy/binaries/python/versions/3.13.12/python.exe -m agents ...`
 
 ## 8. 后续扩展
-- developer/tester 接沙箱真正读写文件、跑命令（需更高权限）。
-- Orchestrator 升级为 LLM agent，动态决定下一阶段（而非固定管线）。
+- ✅ developer/tester 接沙箱（`agents/sandbox.py` + `agents/tools.py`）：真实读写文件、跑命令，路径穿越/越权/超时三重隔离。
+- ✅ Orchestrator 升级为 LLM agent（`decision` 协议动态决定 next/rollback/done），Mock 状态机兜底。
 - 接 `tools/doclint.py` 做「写文档的 agent」产出校验；接 `inspect.py` 巡检。
 - 用 `docs/adr/` 记录重大架构变更，用 `docs/runbooks/` 沉淀排障手册。
 

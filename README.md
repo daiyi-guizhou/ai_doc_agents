@@ -24,8 +24,8 @@ docs/agents/ (提示词 SSOT)
   Pod 调度器 ──spawn/destroy──▶ 无状态 Agent Pod（按 role 运行一次即销毁）
         ▲
         │ request(role)
-  Orchestrator 总控 ──编排 7 阶段──▶ 需求分析→概要设计→开发→测试→部署→验证→复盘
-                                              │(门禁 FAIL 回退到开发)
+  Orchestrator 总控（LLM agent）──动态决定下一阶段──▶ 需求分析→…→复盘
+                                              │(门禁 FAIL 强制回退到开发)
         │ write
         ▼
   agent_runs/<jobid>/  (产物：各阶段 .md + state.json + SUMMARY.md)
@@ -38,12 +38,25 @@ PY="C:/Users/18862/.workbuddy/binaries/python/versions/3.13.12/python.exe"
 $PY -m agents roles                        # 列出可用角色（来自 docs/agents）
 $PY -m agents run "做一个命令行待办工具"    # 真实 LLM（需配置 .env）
 $PY -m agents run --mock "..."             # 离线 Mock 跑通编排与生命周期
+$PY -m agents run --mock --no-sandbox "..." # 关闭沙箱（dev/tester 退回纯文本）
 ```
 
 ### LLM 后端（可插拔）
 - 默认 OpenAI 兼容协议，读 `OPENAI_API_BASE / OPENAI_API_KEY / OPENAI_MODEL`
   （兼容 OpenAI / Azure / vLLM / Ollama）。
 - 缺 key 或 `AGENTS_MOCK=1` → 自动走 `MockLLM`，离线即可跑通全流程。
+
+### 沙箱与真实执行
+- `developer` / `tester` 在 `agent_runs/<jobid>/sandbox/` 内**真实读写文件、跑命令**
+  （`agents/sandbox.py` 做路径穿越拦截 + 命令白名单 + 超时；`agents/tools.py` 解析模型的
+  `actions` 协议）。其余角色仍为纯文本生成。
+- 关闭：`--no-sandbox`。
+
+### Orchestrator 是 LLM agent
+- 不再写死管线：每轮读取「累积上下文 + 上一阶段门禁结果」，输出 `decision`
+  （`next / rollback / done + role`），由模型动态决定走向；Mock 用确定性状态机兜底。
+- 安全网：门禁 FAIL **强制**回退到开发；请求 `done` 前必须已有一次验证 PASS；
+  超过 `MAX_ITER` 判定失败，防死循环。
 
 配置样例见 `.env.example`（复制为 `.env` 后填写）。
 
@@ -61,5 +74,7 @@ $PY -m agents run --mock "..."             # 离线 Mock 跑通编排与生命�
 - 巡检：`python tools/inspect.py docs`（已配每周自动巡检）
 - 看板：用 Obsidian 打开本仓库根目录，`docs/Dashboard.md` 提供 Dataview 实时看板
 
-> 当前项目尚未 `git init`，`tools/hooks/pre-commit` 守门需先 `git init` 再
-> `git config core.hooksPath tools/hooks` 才会生效。
+### Git 提交守门（已生效）
+- 项目已 `git init`，并通过 `git config core.hooksPath tools/hooks` 激活
+  `tools/hooks/pre-commit`：每次提交前自动跑 `doclint --strict`，文档秩序不达标则阻断提交。
+- 已验证：不合规文档会被拦截，合规文档可正常提交。
