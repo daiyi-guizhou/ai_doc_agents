@@ -192,7 +192,7 @@ class Orchestrator:
         return "done", None
 
     # ---------------- 主循环 ----------------
-    def run(self, requirement: str, use_sandbox: bool = True, doc: bool = False,
+    def run(self, requirement: str, use_sandbox: bool = True, doc: bool = True,
             max_iter: int = MAX_ITER, project_root: "str | None" = None) -> "Job":
         from .job import Job
         from .doclint_check import DocLint
@@ -315,6 +315,31 @@ class Orchestrator:
                 ctx += f"\n（文档校验：PASS - {lint.summary}）\n"
                 job.note(f"文档校验 PASS（{lint.summary}）")
                 doclint_retries[role] = 0
+
+                # 6.1) 写回项目文档（历史增厚）：仅当本次任务绑定了后端项目
+                if project_root:
+                    wb = project_mod.write_project_doc(project_root, output)
+                    if wb["status"] == "written":
+                        job.note(f"文档已写回项目：{wb['path']}")
+                        ctx += f"\n（文档写回：OK -> {wb['path']}）\n"
+                    elif wb["status"] == "skipped":
+                        job.note(f"文档写回跳过（已存在）：{wb['path']}")
+                        ctx += f"\n（文档写回：跳过，已存在 {wb['path']}）\n"
+                    else:  # failed：落库后 doclint 复校不通过 → 删脏文件并重做
+                        doclint_retries[role] = doclint_retries.get(role, 0) + 1
+                        n = doclint_retries[role]
+                        ctx += f"\n（文档写回校验失败：{wb.get('reason')}）\n"
+                        job.note(f"文档写回校验失败：{wb.get('reason')}（第 {n} 次）")
+                        if n > DOCLINT_MAX_RETRY:
+                            job.fail(f"{label} 文档写回连续 {DOCLINT_MAX_RETRY} 次不通过，任务失败")
+                            break
+                        ctx += f"\n## 文档写回反馈（请修正后重交）\n{wb.get('feedback', '')}\n"
+                        force_redo_role = role
+                        last_role = role
+                        pos = order.index(role)
+                        last_output = output
+                        last_gate_ok = None
+                        continue
 
             # 7) 门禁判定，回填决策上下文
             if role in GATE_ROLES:

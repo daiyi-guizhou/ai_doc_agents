@@ -30,7 +30,7 @@ SESSIONS = {}                 # sid -> Session
 SESSIONS_LOCK = threading.Lock()
 
 # 服务端级默认（由 `agents web` 启动参数决定）
-_DEFAULTS = {"use_sandbox": True, "doc": False}
+_DEFAULTS = {"use_sandbox": True, "doc": True}
 
 
 def _write_requirement(sid, title, spec):
@@ -224,7 +224,7 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-def run(host="127.0.0.1", port=8000, mock=False, doc=False, no_sandbox=False, project=None):
+def run(host="127.0.0.1", port=8000, mock=False, doc=True, no_sandbox=False, project=None):
     load_dotenv()
     if mock:
         os.environ["AGENTS_MOCK"] = "1"

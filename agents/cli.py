@@ -22,8 +22,8 @@ def _build_parser():
     run_p.add_argument("requirement", nargs="?", default=None,
                        help="用自然语言描述的需求（省略则进入对话澄清，多轮确认后再开工）")
     run_p.add_argument("--mock", action="store_true", help="强制使用 Mock LLM（离线）")
-    run_p.add_argument("--doc", action="store_true",
-                       help="启用文档撰写阶段（documenter 产出须过 doclint 校验）")
+    run_p.add_argument("--no-doc", action="store_false", dest="doc", default=True,
+                       help="关闭文档撰写阶段（默认开启：documenter 产出写回项目 docs/ 并过 doclint）")
     run_p.add_argument("--max-iter", type=int, default=12, help="最大阶段迭代次数")
     run_p.add_argument("--no-sandbox", action="store_true",
                        help="关闭沙箱（developer/tester 退回纯文本生成）")
@@ -40,8 +40,8 @@ def _build_parser():
     web_p.add_argument("--port", type=int, default=8000, help="监听端口")
     web_p.add_argument("--host", default="127.0.0.1", help="监听地址（默认 127.0.0.1）")
     web_p.add_argument("--mock", action="store_true", help="强制使用 Mock LLM（离线）")
-    web_p.add_argument("--doc", action="store_true",
-                       help="默认启用文档撰写阶段（documenter 产出须过 doclint 校验）")
+    web_p.add_argument("--no-doc", action="store_false", dest="doc", default=True,
+                       help="关闭文档撰写阶段（默认开启：documenter 产出写回项目 docs/ 并过 doclint）")
     web_p.add_argument("--no-sandbox", action="store_true",
                        help="关闭沙箱（developer/tester 退回纯文本生成）")
     web_p.add_argument("--project", metavar="PATH", default=None,

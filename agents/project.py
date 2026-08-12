@@ -7,7 +7,10 @@
 项目根由 --project / AGENTS_PROJECT 指定（见 config.get_project_root）。
 """
 import os
+import re
 import subprocess
+
+from . import prompts
 
 
 def collect_project_context(project_root, max_doc_chars=4000, max_files=300):
@@ -73,3 +76,53 @@ def build_project_context(project_root):
         f"## 项目代码文件清单（{pc['file_count']} 个）\n{pc['tree']}\n"
     )
     return block, pc
+
+
+def slugify(title: str, max_len: int = 64) -> str:
+    """把文档标题转成安全的文件名片段（保留中文与字母数字，其余转连字符）。"""
+    s = (title or "").strip().lower()
+    s = re.sub(r"[^\w.-]+", "-", s, flags=re.UNICODE)
+    s = re.sub(r"-{2,}", "-", s)
+    s = s.strip("-.")
+    if not s:
+        s = "doc"
+    return s[:max_len]
+
+
+def write_project_doc(project_root, doc_text):
+    """把一篇已通过 doclint 的文档写回 <project>/docs/<slug>.md（历史增厚）。
+
+    返回 {"status": "written"|"skipped"|"failed", "path", "reason", "feedback"}：
+      - written : 成功写入新文档
+      - skipped : 目标已存在，跳过写回以避免覆盖既有文档（历史增厚以新增为主）
+      - failed  : 落库后 doclint 复校不通过（已删除脏文件），需 agent 重做改稿
+    """
+    from .doclint_check import DocLint
+
+    fm, _ = prompts.parse_frontmatter(doc_text)
+    if not fm or not fm.get("title"):
+        return {"status": "failed", "reason": "文档缺少 frontmatter/title，无法推导落库路径",
+                "path": None, "feedback": "请在文档开头提供合法 frontmatter，并至少包含 title。"}
+    slug = fm.get("slug") or slugify(fm.get("title"))
+    docs_dir = os.path.join(project_root, "docs")
+    os.makedirs(docs_dir, exist_ok=True)
+    target = os.path.join(docs_dir, slug + ".md")
+    # 双保险：slugify 已清洗，这里再校验真实路径仍在项目 docs 内，防止越界写文件
+    if not os.path.realpath(target).startswith(os.path.realpath(docs_dir) + os.sep):
+        return {"status": "failed", "reason": "推导出的落库路径越过项目 docs 目录",
+                "path": None, "feedback": "请检查文档 title/slug 是否含非法路径片段。"}
+    if os.path.exists(target):
+        return {"status": "skipped", "reason": "文档已存在，跳过写回以避免覆盖",
+                "path": target, "feedback": ""}
+    with open(target, "w", encoding="utf-8") as f:
+        f.write(doc_text)
+    # 落库后用磁盘真实路径复校（wikilink 基准以真实目录为准，比内存校验更准）
+    lint = DocLint().validate_path(target)
+    if not lint.ok:
+        try:
+            os.remove(target)
+        except OSError:
+            pass
+        return {"status": "failed", "reason": "落库后 doclint 复校不通过",
+                "path": target, "feedback": lint.feedback}
+    return {"status": "written", "path": target, "feedback": ""}
