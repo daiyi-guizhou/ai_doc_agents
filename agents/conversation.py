@@ -90,6 +90,12 @@ class Clarifier:
         """已确认的需求确认单（markdown）。"""
         return self._spec
 
+    def finalize(self) -> str:
+        """（显式确认）汇总需求确认单，不等确认词。供网页『开始工作』按钮调用。"""
+        self._spec = self._synthesize()
+        self.done = True
+        return self._spec
+
     # ---- 内部 ----
     def _next_assistant(self) -> str:
         if isinstance(self.llm, MockLLM):

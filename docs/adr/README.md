@@ -25,3 +25,4 @@ ADR 一旦 `active` 就**不要改写历史**，推翻旧决策请新开一篇 A
 - [[docs/adr/0003-sandbox-and-llm-orchestrator|ADR-0003: 引入沙箱执行与 LLM 动态编排]]
 - [[docs/adr/0004-documenter-doclint-gate|ADR-0004: 写文档的 Agent 接入 doclint 产出校验]]
 - [[docs/adr/0005-conversational-requirement|ADR-0005: 采用对话式需求澄清（人类在环）]]
+- [[docs/adr/0006-web-conversational-ui|ADR-0006: 网页版对话澄清界面（多对话 + 开始工作）]]

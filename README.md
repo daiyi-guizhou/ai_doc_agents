@@ -43,6 +43,7 @@ $PY -m agents run --mock --yes "..."       # 跳过对话，直接开工（自�
 $PY -m agents run --mock --script turns.txt # 从文件逐行读取对话（回归测试）
 $PY -m agents run --mock --doc "..."       # 额外启用「文档撰写」阶段（产出过 doclint 闸门）
 $PY -m agents run --mock --no-sandbox "..." # 关闭沙箱（dev/tester 退回纯文本）
+$PY -m agents web --mock                  # 启动网页版：多对话澄清 + 「开始工作」按钮（默认 http://127.0.0.1:8000）
 ```
 
 ### LLM 后端（可插拔）
@@ -67,7 +68,7 @@ $PY -m agents run --mock --no-sandbox "..." # 关闭沙箱（dev/tester 退回�
 ### 文档与角色
 - 角色提示词：`docs/agents/`（共 10 篇：orchestrator + 8 个阶段角色 + clarifier（对话澄清，非阶段）；其中 `documenter` 由 `--doc` 启用）
 - 框架设计：`docs/design/multi-agent-pod-framework.md`
-- 决策记录：`docs/adr/0002-adopt-multi-agent-pod-framework.md`、`docs/adr/0004-documenter-doclint-gate.md`、`docs/adr/0005-conversational-requirement.md`
+- 决策记录：`docs/adr/0002-adopt-multi-agent-pod-framework.md`、`docs/adr/0004-documenter-doclint-gate.md`、`docs/adr/0005-conversational-requirement.md`、`docs/adr/0006-web-conversational-ui.md`
 
 ---
 

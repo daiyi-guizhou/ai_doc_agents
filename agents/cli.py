@@ -33,6 +33,15 @@ def _build_parser():
                        help="从文件逐行读取对话输入（每行一条用户发言），用于自动化/测试")
 
     sub.add_parser("roles", help="列出可用角色（来自 docs/agents）")
+
+    web_p = sub.add_parser("web", help="启动网页版对话澄清（多对话、开始工作）")
+    web_p.add_argument("--port", type=int, default=8000, help="监听端口")
+    web_p.add_argument("--host", default="127.0.0.1", help="监听地址（默认 127.0.0.1）")
+    web_p.add_argument("--mock", action="store_true", help="强制使用 Mock LLM（离线）")
+    web_p.add_argument("--doc", action="store_true",
+                       help="默认启用文档撰写阶段（documenter 产出须过 doclint 校验）")
+    web_p.add_argument("--no-sandbox", action="store_true",
+                       help="关闭沙箱（developer/tester 退回纯文本生成）")
     return p
 
 
@@ -87,6 +96,12 @@ def main(argv=None):
         for r in roles:
             spec = prompts.load_role(r)
             print(f"  - {r:22s} {spec['title']}")
+        return 0
+
+    if args.cmd == "web":
+        from . import web
+        web.run(host=args.host, port=args.port, mock=args.mock,
+                doc=args.doc, no_sandbox=args.no_sandbox)
         return 0
 
     if args.cmd != "run":

@@ -33,6 +33,7 @@ updated: 2026-08-12
 | 沙箱 | `agents/sandbox.py` | developer/tester 的真实执行隔离区：文件 I/O + 白名单命令 + 超时 |
 | 工具协议 | `agents/tools.py` | 解析/执行模型的 actions 块（write_file/read_file/list_dir/run） |
 | CLI | `agents/cli.py` | `python -m agents run / roles`；`run` 先进入多轮对话澄清需求（人类在环），`--yes` 跳过、`--script` 自动化 |
+| 网页界面 | `agents/web.py` + `agents/webui/index.html` | 会话制网页（零依赖 `http.server`）：多对话澄清 + 「开始工作」按钮，确认后写入 `requirements/` 并后台跑 Orchestrator |
 
 ## 3. 流水线（Orchestrator 动态编排 + 门禁回退）
 七个阶段作为角色目录与兜底顺序（加 `--doc` 时在「概要设计」后插入「文档撰写」）：
@@ -92,6 +93,7 @@ python -m agents run "做一个命令行待办工具"   # 带初始需求进入�
 python -m agents run --mock "..."            # 离线 Mock：对话澄清 + 流水线
 python -m agents run --mock --yes "..."      # 跳过对话，直接开工（自动化用）
 python -m agents run --mock --script turns.txt   # 从文件逐行读取对话（回归测试）
+python -m agents web --mock          # 启动网页版（多对话澄清 + 「开始工作」），默认 http://127.0.0.1:8000
 ```
 > 注：用托管 Python 运行：`C:/Users/18862/.workbuddy/binaries/python/versions/3.13.12/python.exe -m agents ...`
 
@@ -102,6 +104,8 @@ python -m agents run --mock --script turns.txt   # 从文件逐行读取对话�
   `agents/doclint_check.py` 把其产出单篇校验，error 级即 FAIL → 退回重做，见 `docs/adr/0004-documenter-doclint-gate.md`。
 - ✅ `agents run` 改为**对话式需求澄清**（人类在环）：多轮追问边界后由用户确认开工，
   新增 `clarifier` 角色与 `agents/conversation.py`，见 `docs/adr/0005-conversational-requirement.md`。
+- ✅ 网页版对话澄清：`agents web` 启动会话制网页（多对话 + 「开始工作」），确认后写入
+  `requirements/` 并后台跑 Orchestrator，见 `docs/adr/0006-web-conversational-ui.md`。
 - 接 `inspect.py` 巡检。
 - 用 `docs/adr/` 记录重大架构变更，用 `docs/runbooks/` 沉淀排障手册。
 

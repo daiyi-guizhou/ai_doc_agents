@@ -7,6 +7,9 @@ docs/.reports/
 # 多 Agent 框架运行时产物（每次任务落库，独立于文档治理）
 agent_runs/
 
+# 网页版对话澄清产出的需求文档（运行时生成，本地工件）
+requirements/
+
 # Python 字节码缓存（不应进仓库）
 __pycache__/
 *.pyc

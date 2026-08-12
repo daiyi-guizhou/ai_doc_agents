@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>需求对话澄清 · 多 Agent Pod</title>
+<style>
+  :root {
+    --bg: #1e1e1e; --panel: #252526; --panel2: #2d2d30; --border: #3c3c3c;
+    --text: #d4d4d4; --muted: #9aa0a6; --accent: #4ec9b0; --accent2: #007acc;
+    --user: #1f3a4d; --assistant: #2a2a2b; --ok: #6a9955; --err: #f48771;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; font-size: 14px; }
+  #app { display: flex; height: 100vh; }
+  /* 侧栏 */
+  #sidebar { width: 240px; background: var(--panel); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; }
+  #sidebar h1 { font-size: 14px; margin: 0; padding: 14px 16px; border-bottom: 1px solid var(--border);
+    color: var(--accent); letter-spacing: .5px; }
+  #newBtn { margin: 10px; padding: 9px; border: 1px dashed var(--accent2); background: transparent;
+    color: var(--accent); border-radius: 6px; cursor: pointer; font-size: 13px; }
+  #newBtn:hover { background: var(--accent2); color: #fff; }
+  #sessions { flex: 1; overflow-y: auto; }
+  .sess { padding: 10px 14px; border-bottom: 1px solid var(--border); cursor: pointer;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sess:hover { background: var(--panel2); }
+  .sess.active { background: var(--panel2); border-left: 3px solid var(--accent); }
+  .sess .t { color: var(--text); }
+  .sess .s { font-size: 11px; color: var(--muted); margin-top: 3px; }
+  /* 主区 */
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #chat { flex: 1; overflow-y: auto; padding: 18px; }
+  .msg { max-width: 78%; margin: 10px 0; padding: 10px 13px; border-radius: 10px;
+    white-space: pre-wrap; word-break: break-word; line-height: 1.55; }
+  .msg.user { margin-left: auto; background: var(--user); border: 1px solid #2f5d7a; }
+  .msg.assistant { margin-right: auto; background: var(--assistant); border: 1px solid var(--border); }
+  #composer { border-top: 1px solid var(--border); padding: 12px; display: flex; gap: 10px;
+    background: var(--panel); }
+  #composer textarea { flex: 1; resize: none; height: 44px; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 10px; font: inherit; }
+  #sendBtn { padding: 0 18px; background: var(--accent2); color: #fff; border: none; border-radius: 6px;
+    cursor: pointer; font-size: 13px; }
+  #sendBtn:hover { filter: brightness(1.1); }
+  /* 任务面板 */
+  #jobbar { border-top: 1px solid var(--border); padding: 12px 16px; background: var(--panel);
+    display: flex; align-items: center; gap: 14px; }
+  #startBtn { padding: 10px 22px; background: var(--accent); color: #07241d; border: none;
+    border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; }
+  #startBtn:disabled { background: #3a3a3a; color: #777; cursor: not-allowed; }
+  #startBtn:hover:not(:disabled) { filter: brightness(1.08); }
+  #jobInfo { font-size: 12px; color: var(--muted); white-space: pre-wrap; }
+  #jobInfo .ok { color: var(--ok); } #jobInfo .err { color: var(--err); }
+  #stages { margin: 0 16px 14px; padding: 0; list-style: none; }
+  #stages li { padding: 4px 0; border-bottom: 1px dashed var(--border); color: var(--text); }
+  #stages li .idx { color: var(--muted); margin-right: 8px; }
+  #reqPath { color: var(--accent); }
+  .hint { color: var(--muted); font-size: 12px; padding: 0 16px 8px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <h1>需求对话澄清</h1>
+    <button id="newBtn">+ 新建对话</button>
+    <div id="sessions"></div>
+  </aside>
+  <section id="main">
+    <div id="chat"></div>
+    <div class="hint">AI 会多轮追问边界 / 范围 / 验收 / 约束；确认后点「开始工作」写入需求文档并开工。</div>
+    <ul id="stages"></ul>
+    <div id="composer">
+      <textarea id="input" placeholder="输入需求或补充信息，回车发送（Shift+回车换行）"></textarea>
+      <button id="sendBtn">发送</button>
+    </div>
+    <div id="jobbar">
+      <button id="startBtn" disabled>开始工作</button>
+      <div id="jobInfo"></div>
+    </div>
+  </section>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const state = { sessions: [], current: null, poll: null };
+
+async function api(method, path, body) {
+  const opt = { method, headers: { "Content-Type": "application/json" } };
+  if (body) opt.body = JSON.stringify(body);
+  const r = await fetch(path, opt);
+  if (!r.ok) throw new Error((await r.json()).error || r.status);
+  return r.json();
+}
+
+function escapeId(id) { return encodeURIComponent(id); }
+
+async function refreshSessions() {
+  state.sessions = await api("GET", "/api/sessions");
+  renderSidebar();
+}
+
+function renderSidebar() {
+  const box = $("#sessions");
+  box.innerHTML = "";
+  for (const s of state.sessions) {
+    const div = document.createElement("div");
+    div.className = "sess" + (s.id === state.current ? " active" : "");
+    const t = document.createElement("div"); t.className = "t"; t.textContent = s.title || "新对话";
+    const m = document.createElement("div"); m.className = "s";
+    m.textContent = `${s.count} 条 · ${s.state}`;
+    div.appendChild(t); div.appendChild(m);
+    div.onclick = () => selectSession(s.id);
+    box.appendChild(div);
+  }
+}
+
+async function selectSession(id) {
+  if (state.poll) { clearInterval(state.poll); state.poll = null; }
+  state.current = id;
+  const data = await api("GET", "/api/sessions/" + escapeId(id));
+  renderChat(data.messages);
+  renderJob(data.summary);
+  renderSidebar();
+  updateStartBtn(data.messages);
+}
+
+function renderChat(messages) {
+  const chat = $("#chat");
+  chat.innerHTML = "";
+  for (const m of messages) {
+    const div = document.createElement("div");
+    div.className = "msg " + (m.role === "user" ? "user" : "assistant");
+    div.textContent = m.text;
+    chat.appendChild(div);
+  }
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function renderJob(sum) {
+  const info = $("#jobInfo");
+  const stages = $("#stages");
+  stages.innerHTML = "";
+  if (!sum || sum.state === "idle") { info.textContent = ""; return; }
+  if (sum.requirement_path)
+    info.innerHTML = `需求文档：<span id="reqPath">${sum.requirement_path}</span>\n`;
+  const st = document.createElement("div");
+  if (sum.state === "running") st.textContent = `任务进行中… (${sum.job_id || ""})`;
+  else if (sum.state === "done") st.innerHTML = `<span class="ok">✓ 完成 (${sum.job_id})</span>  产物目录：${sum.dir || ""}`;
+  else if (sum.state === "error" || sum.state === "failed") st.innerHTML = `<span class="err">✗ 失败：${sum.error || ""}</span>`;
+  else st.textContent = `状态：${sum.state}`;
+  info.appendChild(st);
+  for (const s of (sum.stages || [])) {
+    const li = document.createElement("li");
+    const idx = document.createElement("span"); idx.className = "idx"; idx.textContent = String(s.idx).padStart(2, "0");
+    li.appendChild(idx);
+    li.appendChild(document.createTextNode(`${s.label}  <-  ${s.role}`));
+    stages.appendChild(li);
+  }
+}
+
+function updateStartBtn(messages) {
+  const userMsgs = (messages || []).filter(m => m.role === "user").length;
+  $("#startBtn").disabled = userMsgs === 0;
+}
+
+async function sendMessage() {
+  const input = $("#input");
+  const text = input.value.trim();
+  if (!text || !state.current) return;
+  input.value = "";
+  const data = await api("POST", "/api/sessions/" + escapeId(state.current) + "/message", { text });
+  renderChat(data.messages);
+  updateStartBtn(data.messages);
+  refreshSessions();
+}
+
+async function startWork() {
+  if (!state.current) return;
+  $("#startBtn").disabled = true;
+  const data = await api("POST", "/api/sessions/" + escapeId(state.current) + "/start", {});
+  renderJob({ state: "running", requirement_path: data.requirement_path });
+  // 轮询任务状态
+  const id = state.current;
+  state.poll = setInterval(async () => {
+    try {
+      const sum = await api("GET", "/api/sessions/" + escapeId(id) + "/job");
+      renderJob(sum);
+      if (sum.state === "done" || sum.state === "error" || sum.state === "failed") {
+        clearInterval(state.poll); state.poll = null;
+        refreshSessions();
+      }
+    } catch (e) { /* ignore transient */ }
+  }, 1500);
+}
+
+$("#newBtn").onclick = async () => {
+  const s = await api("POST", "/api/sessions", {});
+  await refreshSessions();
+  selectSession(s.id);
+};
+$("#sendBtn").onclick = sendMessage;
+$("#input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+$("#startBtn").onclick = startWork;
+
+// 启动：拉取已有会话，没有则新建一个
+(async () => {
+  await refreshSessions();
+  if (state.sessions.length === 0) {
+    const s = await api("POST", "/api/sessions", {});
+    await refreshSessions();
+    selectSession(s.id);
+  } else {
+    selectSession(state.sessions[0].id);
+  }
+})();
+</script>
+</body>
+</html>
