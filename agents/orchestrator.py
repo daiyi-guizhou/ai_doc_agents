@@ -190,7 +190,8 @@ class Orchestrator:
         return "done", None
 
     # ---------------- 主循环 ----------------
-    def run(self, requirement: str, use_sandbox: bool = True, doc: bool = False) -> "Job":
+    def run(self, requirement: str, use_sandbox: bool = True, doc: bool = False,
+            max_iter: int = MAX_ITER) -> "Job":
         from .job import Job
         from .doclint_check import DocLint
 
@@ -222,8 +223,8 @@ class Orchestrator:
 
         while True:
             iters += 1
-            if iters > MAX_ITER:
-                job.fail(f"超过最大迭代次数({MAX_ITER})，任务未收敛")
+            if iters > max_iter:
+                job.fail(f"超过最大迭代次数({max_iter})，任务未收敛")
                 break
 
             # 1) 决策（doclint 强制重做优先覆盖）

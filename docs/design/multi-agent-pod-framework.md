@@ -32,7 +32,7 @@ updated: 2026-08-12
 | 文档校验 | `agents/doclint_check.py` | 把「写文档的 agent」产出交给 `tools/doclint.py` 单篇校验；error 级即 FAIL |
 | 沙箱 | `agents/sandbox.py` | developer/tester 的真实执行隔离区：文件 I/O + 白名单命令 + 超时 |
 | 工具协议 | `agents/tools.py` | 解析/执行模型的 actions 块（write_file/read_file/list_dir/run） |
-| CLI | `agents/cli.py` | `python -m agents run / roles`，含 `--mock`/`--no-sandbox` |
+| CLI | `agents/cli.py` | `python -m agents run / roles`；`run` 先进入多轮对话澄清需求（人类在环），`--yes` 跳过、`--script` 自动化 |
 
 ## 3. 流水线（Orchestrator 动态编排 + 门禁回退）
 七个阶段作为角色目录与兜底顺序（加 `--doc` 时在「概要设计」后插入「文档撰写」）：
@@ -52,6 +52,17 @@ updated: 2026-08-12
 - 安全网：请求 `done` 前必须已有一次 验证 PASS（否则强制重跑验证）；
   全局迭代上限 `MAX_ITER=16`，防死循环。
 - **验证 PASS 且 复盘完成** → 任务「活干好」。
+
+## 3.1 需求对话澄清（人类在环）
+`agents run` 不再是「一句话直接开工」，而是先进入**多轮对话澄清**：AI 主动追问边界 /
+范围 / 验收 / 约束，用户逐轮补充，**直到用户显式说『确认 / 开始』**，AI 才把对话汇总成
+「需求确认单」（markdown，含原始需求 + 澄清记录 + 执行约定）交给 Orchestrator 开工。
+- 澄清助手提示词（SSOT）：`docs/agents/clarifier.md`；离线由 `agents/conversation.py`
+  的 `Clarifier` 用确定性追问兜底，保证可演示、可验证。
+- 该环节是**人类在环（human-in-the-loop）**的前置交互，不属于 7 阶段流水线本身；
+  确认单会成为 [[requirement-analyst|需求分析]] 的输入起点。
+- CLI 开关：`--yes` / `-y` 跳过对话直接按给定需求开工；`--script FILE` 从文件逐行读取
+  对话输入，便于自动化与回归测试。
 
 ## 4. 提示词来源（SSOT）
 `docs/agents/` 下每篇 `<role>.md` = 一个角色，frontmatter(`type:agent`)+正文=系统提示词。
@@ -76,8 +87,11 @@ updated: 2026-08-12
 ## 7. 运行
 ```bash
 python -m agents roles                       # 列出可用角色
-python -m agents run "做一个命令行待办工具"   # 真实 LLM
-python -m agents run --mock "..."            # 离线 Mock 跑通
+python -m agents run                         # 进入对话澄清（多轮），确认后开工
+python -m agents run "做一个命令行待办工具"   # 带初始需求进入对话澄清
+python -m agents run --mock "..."            # 离线 Mock：对话澄清 + 流水线
+python -m agents run --mock --yes "..."      # 跳过对话，直接开工（自动化用）
+python -m agents run --mock --script turns.txt   # 从文件逐行读取对话（回归测试）
 ```
 > 注：用托管 Python 运行：`C:/Users/18862/.workbuddy/binaries/python/versions/3.13.12/python.exe -m agents ...`
 
@@ -86,6 +100,8 @@ python -m agents run --mock "..."            # 离线 Mock 跑通
 - ✅ Orchestrator 升级为 LLM agent（`decision` 协议动态决定 next/rollback/done），Mock 状态机兜底。
 - ✅ 接 `tools/doclint.py` 做「写文档的 agent」产出校验：新增 `documenter` 角色（`--doc` 启用），
   `agents/doclint_check.py` 把其产出单篇校验，error 级即 FAIL → 退回重做，见 `docs/adr/0004-documenter-doclint-gate.md`。
+- ✅ `agents run` 改为**对话式需求澄清**（人类在环）：多轮追问边界后由用户确认开工，
+  新增 `clarifier` 角色与 `agents/conversation.py`，见 `docs/adr/0005-conversational-requirement.md`。
 - 接 `inspect.py` 巡检。
 - 用 `docs/adr/` 记录重大架构变更，用 `docs/runbooks/` 沉淀排障手册。
 

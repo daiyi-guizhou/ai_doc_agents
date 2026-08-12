@@ -24,6 +24,7 @@ updated: 2026-08-12
 - [[verifier|验证]] — 终验 PASS / FAIL
 - [[retrospector|复盘]] — 事后总结
 - [[orchestrator|总控策略]] — Orchestrator 的编排与门禁规则
+- [[clarifier|需求澄清]] — 开工前的对话澄清助手（非阶段，人类在环，run 进入对话模式时启用）
 
 ## 相关文档
 - 框架设计：[[../design/multi-agent-pod-framework|多 Agent Pod 框架设计]]
