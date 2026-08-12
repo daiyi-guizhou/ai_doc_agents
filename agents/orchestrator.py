@@ -21,6 +21,8 @@
 import re
 
 from . import prompts
+from . import config
+from . import project as project_mod
 from .llm import MockLLM
 
 # 基础阶段（不含文档撰写）；run(doc=True) 时于 system-designer 后插入 documenter
@@ -191,15 +193,18 @@ class Orchestrator:
 
     # ---------------- 主循环 ----------------
     def run(self, requirement: str, use_sandbox: bool = True, doc: bool = False,
-            max_iter: int = MAX_ITER) -> "Job":
+            max_iter: int = MAX_ITER, project_root: "str | None" = None) -> "Job":
         from .job import Job
         from .doclint_check import DocLint
+
+        if project_root is None:
+            project_root = config.get_project_root()
 
         stages = self._build_stages(doc)
         order = [r for r, _ in stages]
         role_label = dict(stages)
 
-        job = Job(requirement, with_sandbox=use_sandbox)
+        job = Job(requirement, with_sandbox=use_sandbox, project_root=project_root)
         job.note("Orchestrator(LLM-agent) 启动，需求：" + requirement)
         if doc:
             job.note("文档撰写阶段已启用：documenter 产出须通过 doclint 校验闸门")
@@ -210,7 +215,12 @@ class Orchestrator:
         else:
             job.note("决策来源：LLM 动态决策（docs/agents/orchestrator.md 为策略提示词）")
 
-        ctx = f"原始需求：{requirement}\n"
+        if project_root:
+            pctx, pc = project_mod.build_project_context(project_root)
+            ctx = f"原始需求：{requirement}\n\n" + pctx + "\n"
+            job.note(f"已摄入项目文档 {pc['doc_count']} 篇、代码文件 {pc['file_count']} 个（项目根：{project_root}）")
+        else:
+            ctx = f"原始需求：{requirement}\n"
         last_role = None
         last_gate_ok = None
         last_output = ""

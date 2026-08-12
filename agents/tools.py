@@ -15,6 +15,7 @@ Mock 模式下，developer/tester 由 mock_actions() 给出确定性的真实动
 以此在零密钥环境下也能证明沙箱能力可用。
 """
 import json
+import os
 import re
 
 from .sandbox import Sandbox
@@ -111,8 +112,12 @@ def _indent(s: str, n: int = 4) -> str:
     return "\n".join((" " * n) + ln for ln in s.splitlines())
 
 
-def mock_actions(role: str, requirement: str) -> list:
-    """Mock 模式下 developer/tester 的确定性真实动作（沙箱内真写真跑）。"""
+def mock_actions(role: str, requirement: str, project_root: "str | None" = None) -> list:
+    """Mock 模式下 developer/tester 的确定性真实动作（沙箱内真写真跑）。
+
+    project_root 提供时，tester 改为运行「后端项目自身的测试入口」
+    （tests/run_tests.py 或 pytest），以验证「在真实项目里跑测试」。
+    """
     req_line = requirement.strip().replace("\n", " ")
     if role == "developer":
         code = (
@@ -128,6 +133,10 @@ def mock_actions(role: str, requirement: str) -> list:
             {"action": "run", "cmd": ["python", "solution.py"], "timeout": 30},
         ]
     if role == "tester":
+        if project_root:
+            test_cmd = _detect_project_test(project_root)
+            if test_cmd:
+                return [{"action": "run", "cmd": test_cmd, "timeout": 60}]
         test = (
             "import solution\n"
             "assert solution.run(), 'run() 不应为空'\n"
@@ -138,3 +147,14 @@ def mock_actions(role: str, requirement: str) -> list:
             {"action": "run", "cmd": ["python", "_test_solution.py"], "timeout": 30},
         ]
     return []
+
+
+def _detect_project_test(project_root: str):
+    """返回后端项目可执行的测试命令（列表）；无则 None。"""
+    run_tests = os.path.join(project_root, "tests", "run_tests.py")
+    if os.path.isfile(run_tests):
+        return ["python", "tests/run_tests.py"]
+    if os.path.isfile(os.path.join(project_root, "pytest.ini")) or \
+       os.path.isfile(os.path.join(project_root, "pyproject.toml")):
+        return ["pytest"]
+    return None

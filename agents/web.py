@@ -17,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import prompts
 from .conversation import Clarifier
-from .config import load_dotenv, get_llm, is_mock
+from .config import load_dotenv, get_llm, is_mock, set_project_root, get_project_root
 from .scheduler import Scheduler
 from .orchestrator import Orchestrator
 
@@ -82,9 +82,10 @@ class Session:
 
     def _run(self, spec):
         try:
-            orch = Orchestrator(Scheduler(self.llm))
+            project = _DEFAULTS.get("project")
+            orch = Orchestrator(Scheduler(self.llm, project_root=project))
             job = orch.run(spec, use_sandbox=_DEFAULTS["use_sandbox"],
-                           doc=_DEFAULTS["doc"])
+                           doc=_DEFAULTS["doc"], project_root=project)
             self.job = job
         except Exception as e:  # 异常也记录，便于前端展示
             self.job_error = str(e)
@@ -223,15 +224,20 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-def run(host="127.0.0.1", port=8000, mock=False, doc=False, no_sandbox=False):
+def run(host="127.0.0.1", port=8000, mock=False, doc=False, no_sandbox=False, project=None):
     load_dotenv()
     if mock:
         os.environ["AGENTS_MOCK"] = "1"
+    if project:
+        set_project_root(project)
     _DEFAULTS["doc"] = doc
     _DEFAULTS["use_sandbox"] = not no_sandbox
+    _DEFAULTS["project"] = get_project_root() if project else None
     mode = "MOCK(离线)" if is_mock() else f"LLM({os.environ.get('OPENAI_MODEL', '?')})"
     print(f"[agents-web] 启动：http://{host}:{port}  模式={mode}  "
           f"文档阶段={'开' if doc else '关'}  沙箱={'开' if _DEFAULTS['use_sandbox'] else '关'}")
+    if _DEFAULTS["project"]:
+        print(f"[agents-web] 目标项目：{_DEFAULTS['project']}")
     print(f"[agents-web] 需求文档将写入：{REQ_DIR}")
     httpd = ThreadingHTTPServer((host, port), Handler)
     try:

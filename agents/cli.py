@@ -8,7 +8,7 @@
 import argparse
 import sys
 
-from .config import load_dotenv, get_llm, is_mock
+from .config import load_dotenv, get_llm, is_mock, set_project_root, get_project_root
 from . import prompts
 from .scheduler import Scheduler
 from .orchestrator import Orchestrator
@@ -31,6 +31,8 @@ def _build_parser():
                        help="跳过对话澄清，直接按给定需求开工（需配合需求文本）")
     run_p.add_argument("--script", metavar="FILE", default=None,
                        help="从文件逐行读取对话输入（每行一条用户发言），用于自动化/测试")
+    run_p.add_argument("--project", metavar="PATH", default=None,
+                       help="被开发的后端项目根目录（Agent 读其 docs/、改其代码、跑其测试）")
 
     sub.add_parser("roles", help="列出可用角色（来自 docs/agents）")
 
@@ -42,6 +44,8 @@ def _build_parser():
                        help="默认启用文档撰写阶段（documenter 产出须过 doclint 校验）")
     web_p.add_argument("--no-sandbox", action="store_true",
                        help="关闭沙箱（developer/tester 退回纯文本生成）")
+    web_p.add_argument("--project", metavar="PATH", default=None,
+                       help="被开发的后端项目根目录（Agent 读其 docs/、改其代码、跑其测试）")
     return p
 
 
@@ -101,7 +105,7 @@ def main(argv=None):
     if args.cmd == "web":
         from . import web
         web.run(host=args.host, port=args.port, mock=args.mock,
-                doc=args.doc, no_sandbox=args.no_sandbox)
+                doc=args.doc, no_sandbox=args.no_sandbox, project=args.project)
         return 0
 
     if args.cmd != "run":
@@ -111,10 +115,15 @@ def main(argv=None):
     if args.mock:
         import os
         os.environ["AGENTS_MOCK"] = "1"
+    if getattr(args, "project", None):
+        set_project_root(args.project)
 
     llm = get_llm()
     mode = "MOCK(离线)" if is_mock() else f"LLM({os.environ.get('OPENAI_MODEL','?')})"
-    scheduler = Scheduler(llm)
+    project = get_project_root()
+    if project:
+        mode += f"  项目={project}"
+    scheduler = Scheduler(llm, project_root=project)
     orch = Orchestrator(scheduler)
     use_sandbox = not args.no_sandbox
 
@@ -136,7 +145,7 @@ def main(argv=None):
                                use_sandbox, args.doc, mode)
 
     job = orch.run(requirement, use_sandbox=use_sandbox, doc=args.doc,
-                   max_iter=args.max_iter)
+                   max_iter=args.max_iter, project_root=project)
 
     print("\n" + "=" * 56)
     print(f"Job {job.job_id}  状态={job.state}")

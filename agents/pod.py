@@ -15,10 +15,11 @@ from . import tools
 
 
 class Pod:
-    def __init__(self, scheduler, role: str, llm):
+    def __init__(self, scheduler, role: str, llm, project_root=None):
         self.scheduler = scheduler
         self.role = role
         self.llm = llm
+        self.project_root = project_root
         self.spec = prompts.load_role(role)  # 提示词来自本地文档（SSOT）
         self.id = f"pod-{role}-{str(uuid.uuid4())[:8]}"
 
@@ -42,7 +43,7 @@ class Pod:
 
         # 决定动作：Mock 用确定性真实动作；真实 LLM 从产出中解析 actions 块
         if isinstance(self.llm, MockLLM):
-            actions = tools.mock_actions(self.role, task)
+            actions = tools.mock_actions(self.role, task, self.project_root)
         else:
             actions = tools.parse_actions(output)
 

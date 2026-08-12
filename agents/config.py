@@ -38,3 +38,24 @@ def get_llm():
 
 def is_mock():
     return os.environ.get("AGENTS_MOCK") == "1" or not os.environ.get("OPENAI_API_KEY")
+
+
+def set_project_root(path: str) -> None:
+    """把 --project <path> 写入环境变量，作为全局唯一的项目绑定入口。"""
+    if path:
+        os.environ["AGENTS_PROJECT"] = os.path.realpath(path)
+
+
+def get_project_root() -> "str | None":
+    """返回被开发的后端项目根目录（由 --project / AGENTS_PROJECT 指定）。
+
+    这就是 Agent 真正要读取文档、修改代码、运行测试的那个仓库。
+    未配置或路径不存在时返回 None（回退为无项目的纯编排模式）。
+    """
+    p = os.environ.get("AGENTS_PROJECT")
+    if not p:
+        return None
+    rp = os.path.realpath(p)
+    if not os.path.isdir(rp):
+        return None
+    return rp
