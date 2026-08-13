@@ -86,3 +86,25 @@ class DocLint:
         """校验磁盘上某个真实文档（用于校验已落库的文档）。"""
         with open(path, encoding="utf-8") as f:
             return self.validate_text(f.read(), os.path.basename(path))
+
+    def validate_dir(self, path):
+        """校验磁盘上某个目录（递归 .md），用于治理复检被开发项目的 docs/。"""
+        if not os.path.isdir(path):
+            return DocLintResult(False, [], [f"目录不存在: {path}"], "")
+        cmd = [self.python, self.doclint_path, path, "--json"]
+        if self.strict:
+            cmd.append("--strict")
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        except Exception as e:  # 执行异常不致命，避免卡死编排
+            return DocLintResult(False, [], [f"doclint 执行异常: {e}"], "")
+        out = proc.stdout or ""
+        try:
+            data = json.loads(out)
+        except json.JSONDecodeError:
+            return DocLintResult(False, [], [f"doclint 输出无法解析: {out[-400:]}"], out)
+        issues = data.get("issues", [])
+        errors = [i for i in issues if i.get("severity") == "error"]
+        warnings = [i for i in issues if i.get("severity") == "warning"]
+        ok = len(errors) == 0
+        return DocLintResult(ok, errors, warnings, out)

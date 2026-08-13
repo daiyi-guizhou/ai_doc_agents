@@ -38,9 +38,14 @@ updated: 2026-08-12
 ]
 ```
 
-支持动作：`write_file` / `read_file` / `list_dir` / `run`。
+支持动作：`read_file` / `write_file` / `edit_file` / `list_dir` / `run`。
+- **改既有文件前必须先 `read_file`**，再用 `edit_file`（定点替换 `old`→`new`）改指定片段——
+  比整文件覆写更安全、不易丢内容、改动可追溯。
+- `write_file` 适合**新建**文件；`edit_file` 适合**修改**已有文件。
 约束：路径相对沙箱根、禁止越界；`run` 仅限白名单可执行文件（python / node / pytest / git 等），
 由 `agents/sandbox.py` 强制隔离与超时。默认请**真正落盘代码并跑通**，而非只给片段。
+注意：当本次任务绑定了后端项目（沙箱根即项目目录），改动会真实落到项目仓库，
+且已在独立 git 分支上进行——请保持改动聚焦、可回滚。
 
 ## 相关文档
 - 上游设计：[[system-designer|概要设计]]

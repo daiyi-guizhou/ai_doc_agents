@@ -6,10 +6,14 @@
     python -m agents roles
 """
 import argparse
+import json
+import os
+import subprocess
 import sys
 
 from .config import load_dotenv, get_llm, is_mock, set_project_root, get_project_root
 from . import prompts
+from . import gitutil
 from .scheduler import Scheduler
 from .orchestrator import Orchestrator
 
@@ -46,7 +50,27 @@ def _build_parser():
                        help="关闭沙箱（developer/tester 退回纯文本生成）")
     web_p.add_argument("--project", metavar="PATH", default=None,
                        help="被开发的后端项目根目录（Agent 读其 docs/、改其代码、跑其测试）")
+
+    # approve / rollback：人工 review 闸门（作用于已 done 的任务对应的项目分支）
+    ap = sub.add_parser("approve", help="合并某任务的 agent 分支回项目主干（需先 review REVIEW.md）")
+    ap.add_argument("job_id", help="agent_runs/<job_id> 中的 job_id")
+    rb = sub.add_parser("rollback", help="丢弃某任务的 agent 分支及其改动，回到项目主干")
+    rb.add_argument("job_id", help="agent_runs/<job_id> 中的 job_id")
+
+    lint_p = sub.add_parser("lint", help="用 doclint 校验文档目录（默认脚手架 docs/）")
+    lint_p.add_argument("path", nargs="?", default=None,
+                        help="要校验的目录（默认：本仓库 docs/；传入后端项目 docs/ 即治理其文档）")
     return p
+
+
+def _load_job_state(job_id):
+    """读取 agent_runs/<job_id>/state.json，返回 dict 或 None。"""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    path = os.path.join(here, "agent_runs", job_id, "state.json")
+    if not os.path.isfile(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
 
 
 def _clarify(llm, initial, script_lines, use_sandbox, doc, mode):
@@ -107,6 +131,49 @@ def main(argv=None):
         web.run(host=args.host, port=args.port, mock=args.mock,
                 doc=args.doc, no_sandbox=args.no_sandbox, project=args.project)
         return 0
+
+    if args.cmd == "approve":
+        st = _load_job_state(args.job_id)
+        if not st:
+            print(f"[agents] 找不到任务状态：agent_runs/{args.job_id}/state.json", file=sys.stderr)
+            return 2
+        g = st.get("git") or {}
+        project = st.get("project_root")
+        if not project or g.get("kind") != "git":
+            print("[agents] 该任务未绑定 git 项目分支，无可合并内容。", file=sys.stderr)
+            return 2
+        res = gitutil.merge_to_main(project, g["branch"], g.get("base_branch"))
+        if res.get("ok"):
+            print(f"[agents] 已合并 {g['branch']} → {g['base_branch']}（未推送，请自行 push）。")
+            return 0
+        print(f"[agents] 合并失败：{res.get('error')}", file=sys.stderr)
+        return 1
+
+    if args.cmd == "rollback":
+        st = _load_job_state(args.job_id)
+        if not st:
+            print(f"[agents] 找不到任务状态：agent_runs/{args.job_id}/state.json", file=sys.stderr)
+            return 2
+        g = st.get("git") or {}
+        project = st.get("project_root")
+        if not project or g.get("kind") != "git":
+            print("[agents] 该任务未绑定 git 项目分支，无可回滚内容。", file=sys.stderr)
+            return 2
+        res = gitutil.rollback(project, g["branch"], g.get("base_branch"))
+        if res.get("ok"):
+            print(f"[agents] 已丢弃分支 {g['branch']}，回到 {g['base_branch']}。")
+            return 0
+        print(f"[agents] 回滚失败：{res.get('error')}", file=sys.stderr)
+        return 1
+
+    if args.cmd == "lint":
+        target = args.path or os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs")
+        rc = subprocess.run([sys.executable,
+                             os.path.join(os.path.dirname(os.path.dirname(
+                                 os.path.abspath(__file__))), "tools", "doclint.py"),
+                             target, "--strict"]).returncode
+        return rc
 
     if args.cmd != "run":
         parser.print_help()

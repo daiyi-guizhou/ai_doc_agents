@@ -56,6 +56,11 @@
   #stages li { padding: 4px 0; border-bottom: 1px dashed var(--border); color: var(--text); }
   #stages li .idx { color: var(--muted); margin-right: 8px; }
   #reqPath { color: var(--accent); }
+  #projrow { display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+    border-top: 1px solid var(--border); background: var(--panel); }
+  #projrow label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  #projInput { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 10px; font: inherit; }
   .hint { color: var(--muted); font-size: 12px; padding: 0 16px 8px; }
 </style>
 </head>
@@ -77,6 +82,10 @@
     <div id="jobbar">
       <button id="startBtn" disabled>开始工作</button>
       <div id="jobInfo"></div>
+    </div>
+    <div id="projrow">
+      <label for="projInput">目标项目（--project）</label>
+      <input id="projInput" type="text" placeholder="可选项：被开发的后端项目绝对路径，留空用服务端默认" />
     </div>
   </section>
 </div>
@@ -144,6 +153,8 @@ function renderJob(sum) {
   if (!sum || sum.state === "idle") { info.textContent = ""; return; }
   if (sum.requirement_path)
     info.innerHTML = `需求文档：<span id="reqPath">${sum.requirement_path}</span>\n`;
+  if (sum.project)
+    info.innerHTML += `目标项目：<span id="reqPath">${sum.project}</span>\n`;
   const st = document.createElement("div");
   if (sum.state === "running") st.textContent = `任务进行中… (${sum.job_id || ""})`;
   else if (sum.state === "done") st.innerHTML = `<span class="ok">✓ 完成 (${sum.job_id})</span>  产物目录：${sum.dir || ""}`;
@@ -178,8 +189,10 @@ async function sendMessage() {
 async function startWork() {
   if (!state.current) return;
   $("#startBtn").disabled = true;
-  const data = await api("POST", "/api/sessions/" + escapeId(state.current) + "/start", {});
-  renderJob({ state: "running", requirement_path: data.requirement_path });
+  const proj = $("#projInput").value.trim();
+  const body = proj ? { project: proj } : {};
+  const data = await api("POST", "/api/sessions/" + escapeId(state.current) + "/start", body);
+  renderJob({ state: "running", requirement_path: data.requirement_path, project: data.project });
   // 轮询任务状态
   const id = state.current;
   state.poll = setInterval(async () => {

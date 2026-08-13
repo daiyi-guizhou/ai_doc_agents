@@ -13,8 +13,12 @@ import subprocess
 from . import prompts
 
 
-def collect_project_context(project_root, max_doc_chars=4000, max_files=300):
-    """遍历 <root>/docs/**.md 与各代码文件，返回 {doc_count, file_count, docs_block, tree}。"""
+def collect_project_context(project_root, max_doc_chars=None, max_files=300):
+    """遍历 <root>/docs/**.md 与各代码文件，返回 {doc_count, file_count, docs_block, tree}。
+
+    max_doc_chars=None 表示不截断（保真优先）；设置正整数则对该长度做软截断。
+    整库文档通常不大，保真读取更能满足「全部历史文档」诉求；超大项目可传阈值。
+    """
     root = project_root
     doc_parts = []
     doc_count = 0
@@ -30,7 +34,7 @@ def collect_project_context(project_root, max_doc_chars=4000, max_files=300):
                 except Exception:
                     continue
                 rel = os.path.relpath(p, root).replace("\\", "/")
-                if len(text) > max_doc_chars:
+                if max_doc_chars and len(text) > max_doc_chars:
                     text = text[:max_doc_chars].rstrip() + "\n…(文档过长已截断)"
                 doc_parts.append(f"### 文档 {rel}\n{text}")
                 doc_count += 1
@@ -40,6 +44,40 @@ def collect_project_context(project_root, max_doc_chars=4000, max_files=300):
     docs_block = "\n\n".join(doc_parts) if doc_parts else "（无 docs/ 文档）"
     return {"doc_count": doc_count, "file_count": len(files),
             "docs_block": docs_block, "tree": tree}
+
+
+def _tokenize(text: str):
+    """极简分词：小写、去标点、按非词字符切分（中英文混排够用）。"""
+    toks = re.findall(r"[\w\u4e00-\u9fff]+", text.lower())
+    return [t for t in toks if len(t) > 1]
+
+
+def retrieve_relevant_docs(project_root, requirement: str, top_k: int = 6):
+    """按需求关键词对相关文档做轻量检索，返回 [(rel_path, score)] 降序。
+
+    用于「需求驱动的相关上下文」——既保留全文（保真），又能在多文档时聚焦重点。
+    """
+    root = project_root
+    docs_dir = os.path.join(root, "docs")
+    req_tokens = set(_tokenize(requirement))
+    scored = []
+    if os.path.isdir(docs_dir):
+        for dirpath, _d, files in os.walk(docs_dir):
+            for fn in sorted(files):
+                if not fn.lower().endswith(".md"):
+                    continue
+                p = os.path.join(dirpath, fn)
+                try:
+                    text = open(p, encoding="utf-8").read()
+                except Exception:
+                    continue
+                toks = _tokenize(text)
+                overlap = len(req_tokens & set(toks))
+                score = overlap / max(1, len(req_tokens))
+                rel = os.path.relpath(p, root).replace("\\", "/")
+                scored.append((rel, score))
+    scored.sort(key=lambda x: -x[1])
+    return scored[:top_k]
 
 
 def _list_code_files(root):

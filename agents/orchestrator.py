@@ -18,11 +18,15 @@
   - 模型请求 done 前，必须已有一次 验证 PASS，否则强制重跑验证。
   - MAX_ITER 上限防死循环；超次判定任务失败。
 """
+import os
 import re
+from datetime import date
 
 from . import prompts
 from . import config
 from . import project as project_mod
+from . import conversation
+from . import gitutil
 from .llm import MockLLM
 
 # 基础阶段（不含文档撰写）；run(doc=True) 时于 system-designer 后插入 documenter
@@ -89,9 +93,10 @@ class Orchestrator:
         except Exception:
             self._base_prompt = "你是多 Agent 系统的总控编排者，负责决定下一阶段。"
 
-    def _task_for(self, label: str, role: str, requirement: str, redo: bool = False) -> str:
+    def _task_for(self, label: str, role: str, requirement: str, redo: bool = False,
+                  acceptance: "list | None" = None) -> str:
         head = "（重做）" if redo else ""
-        return (
+        base = (
             f"你是本次任务的【{label}】阶段负责人（角色：{role}）{head}。\n"
             f"原始需求：{requirement}\n\n"
             f"请基于上方『任务上下文』中的前序产出，完成本阶段交付物；"
@@ -99,6 +104,13 @@ class Orchestrator:
             f"若本阶段为『验证』，请在开头明确给出 PASS 或 FAIL 判定及理由；"
             f"若为『测试/部署』，请在开头给出 通过 / 失败 结论。"
         )
+        if role == "verifier" and acceptance:
+            bullets = "\n".join(f"- {c}" for c in acceptance)
+            base += (
+                f"\n\n## 本次验收标准（须逐项核验，给出 PASS/FAIL）\n"
+                f"ACCEPT:\n{bullets}\nENDACCEPT"
+            )
+        return base
 
     @staticmethod
     def _gate(label: str, output: str) -> bool:
@@ -205,6 +217,7 @@ class Orchestrator:
         role_label = dict(stages)
 
         job = Job(requirement, with_sandbox=use_sandbox, project_root=project_root)
+        job.project_root = project_root
         job.note("Orchestrator(LLM-agent) 启动，需求：" + requirement)
         if doc:
             job.note("文档撰写阶段已启用：documenter 产出须通过 doclint 校验闸门")
@@ -215,12 +228,39 @@ class Orchestrator:
         else:
             job.note("决策来源：LLM 动态决策（docs/agents/orchestrator.md 为策略提示词）")
 
+        # 安全网：绑定后端项目且启用沙箱 → 先建 git 检查点（切出 agent 分支，原分支保持干净）
+        job.git = None
+        if project_root and use_sandbox:
+            cp = gitutil.checkpoint(project_root, job.job_id)
+            job.git = cp
+            if cp.get("ok") and cp.get("kind") == "git":
+                job.note(f"已建 git 检查点：分支 {cp['branch']}（基线 {cp['base_commit'][:8]}），"
+                         f"原分支 {cp['base_branch']} 保持干净；改动可经 review 后合并")
+            elif cp.get("kind") == "none":
+                job.note("目标项目非 git 仓库（或 AGENTS_NO_GIT=1）：跳过 git 检查点，改动直接落在工作区")
+            else:
+                job.note(f"git 检查点建立失败：{cp.get('error')}（继续，但改动无分支隔离）")
+
+        # 把需求确认单也纳入被开发项目的文档历史（下次任务即可被摄入为「历史文档」）
+        if project_root:
+            wb = project_mod.write_project_doc(project_root,
+                                               self._requirement_as_project_doc(requirement, job.job_id))
+            if wb["status"] == "written":
+                job.note(f"需求确认单已纳入项目文档历史：{wb['path']}")
+            elif wb["status"] == "skipped":
+                job.note("需求确认单写回跳过（同内容已存在）")
+            # failed 不致命：仅影响历史积淀，不影响本轮开发
+
         if project_root:
             pctx, pc = project_mod.build_project_context(project_root)
             ctx = f"原始需求：{requirement}\n\n" + pctx + "\n"
             job.note(f"已摄入项目文档 {pc['doc_count']} 篇、代码文件 {pc['file_count']} 个（项目根：{project_root}）")
         else:
             ctx = f"原始需求：{requirement}\n"
+
+        # 验收标准（用于验证阶段可追溯核验）
+        acceptance = conversation.extract_acceptance(requirement)
+        job.note(f"验收标准 {len(acceptance)} 条，将在验证阶段逐项核验")
         last_role = None
         last_gate_ok = None
         last_output = ""
@@ -281,10 +321,11 @@ class Orchestrator:
             pod = self.scheduler.spawn(role)
             sandbox = job.sandbox if role in SANDBOX_ROLES else None
             try:
-                output = pod.run(
-                    task=self._task_for(label, role, requirement, redo=redo),
-                    context=ctx, sandbox=sandbox,
+                task = self._task_for(
+                    label, role, requirement, redo=redo,
+                    acceptance=acceptance if role == "verifier" else None,
                 )
+                output = pod.run(task=task, context=ctx, sandbox=sandbox)
             finally:
                 self.scheduler.destroy(pod)
 
@@ -362,5 +403,99 @@ class Orchestrator:
             job.done()
             job.note("验证通过且复盘完成，任务『活干好』✓")
 
+        # 安全着陆（Phase 3）：绑定项目且已建 git 检查点 → 提交改动 + 生成 REVIEW 闸门
+        if (job.state == "done" and project_root and use_sandbox
+                and job.git and job.git.get("ok") and job.git.get("kind") == "git"):
+            self._land_project(job, project_root, requirement, acceptance)
+
         job.save()
         return job
+
+    # ---------------- 辅助：需求→项目文档 / 安全着陆 ----------------
+    @staticmethod
+    def _requirement_as_project_doc(spec: str, job_id: str) -> str:
+        """把需求确认单包装成一篇合规 spec 文档，写回被开发项目的 docs/ 作为历史。"""
+        today = date.today().isoformat()
+        h = __import__("hashlib").md5(spec.encode("utf-8")).hexdigest()[:8]
+        title = f"需求确认单-{h}"
+        return (
+            f"---\n"
+            f"title: {title}\n"
+            f"type: spec\n"
+            f"owner: human\n"
+            f"status: active\n"
+            f"review_cycle: 30d\n"
+            f"tags: [spec, requirement, agent]\n"
+            f"updated: {today}\n"
+            f"---\n\n"
+            f"{spec}\n"
+        )
+
+    def _land_project(self, job, project_root, requirement, acceptance):
+        """任务 done 后：在 agent 分支提交改动 + 生成 REVIEW.md + 项目 docs 治理复检。"""
+        g = job.git
+        # 1) 提交改动（在 agent 分支上，不 push）
+        msg = f"agent({job.job_id}): {requirement[:60]}"
+        c = gitutil.commit(project_root, msg)
+        if c.get("ok"):
+            if c.get("empty"):
+                job.note("项目无新改动可提交（本次任务未修改文件）")
+            else:
+                job.note(f"项目改动已提交（分支 {g['branch']}，commit {(c.get('commit') or '')[:8]}）；"
+                         f"未推送主干，等待人工 review")
+        else:
+            job.note(f"项目提交失败：{c.get('error')}")
+
+        # 2) REVIEW.md（人工 review 闸门说明）
+        review = self._build_review(job, project_root, g, c, acceptance)
+        review_path = os.path.join(job.dir, "REVIEW.md")
+        with open(review_path, "w", encoding="utf-8") as f:
+            f.write(review)
+        job.note(f"已生成 REVIEW.md（人工 review 闸门）：{review_path}")
+
+        # 3) 项目 docs 治理复检（不阻断，仅作为治理信号）
+        self._lint_project_docs(job, project_root)
+
+    @staticmethod
+    def _build_review(job, project_root, g, commit_result, acceptance) -> str:
+        diff = gitutil.diff_stat(project_root, g.get("base_commit"))
+        files = gitutil.changed_files(project_root, g.get("base_commit"))
+        lines = [
+            f"# Review 闸门 · Job {job.job_id}",
+            "",
+            f"> 需求：{job.requirement}",
+            "",
+            "## 校验结论",
+            f"- 任务状态：**{job.state}**",
+            f"- 改动分支：`{g.get('branch')}`（基于 `{g.get('base_branch')}`）",
+            f"- 提交：{'无新改动' if commit_result.get('empty') else (commit_result.get('commit') or '失败')}",
+            "",
+            "## 改动文件",
+            "\n".join(f"- {f}" for f in files) if files else "- （无）",
+            "",
+            "## 验收标准（须人工确认）",
+            "\n".join(f"- [ ] {a}" for a in acceptance),
+            "",
+            "## 人工处置",
+            "- **通过**：`python -m agents approve " + job.job_id + "` → 合并回主干并删分支（不自动推送）",
+            "- **拒绝**：`python -m agents rollback " + job.job_id + "` → 丢弃分支与改动，回到主干",
+            "",
+            "## 改动差异（stat）",
+            "```",
+            diff or "（无差异）",
+            "```",
+        ]
+        return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def _lint_project_docs(job, project_root):
+        from .doclint_check import DocLint
+        docs_dir = os.path.join(project_root, "docs")
+        if not os.path.isdir(docs_dir):
+            return
+        lint = DocLint().validate_dir(docs_dir)
+        if lint.ok:
+            job.note(f"项目 docs 治理复检通过（{len(lint.errors)} 错误 / {len(lint.warnings)} 警告）")
+        else:
+            job.note(f"项目 docs 治理复检发现 {len(lint.errors)} 个错误，"
+                     f"建议人工修正后再 approve：{lint.summary}")

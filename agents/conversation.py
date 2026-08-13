@@ -134,6 +134,28 @@ class Clarifier:
             "# 需求确认单\n\n"
             f"## 原始需求\n{self.requirement}\n\n"
             "## 澄清记录\n" + qa + "\n\n"
+            "## 验收标准\n"
+            "- 依据上述需求完成实现，且测试阶段 PASS（需求可被执行并验证通过）\n"
+            "- 不改动需求边界之外的内容；改动须落在既有代码/文档体系内\n\n"
             "## 执行约定\n按上述边界与验收标准推进；边界外内容默认不做，"
             "除非后续明确追加需求。"
         )
+
+
+def extract_acceptance(spec: str) -> list:
+    """从需求确认单中解析『验收标准』条目；无则给默认兜底。"""
+    lines = (spec or "").splitlines()
+    out, in_sec = [], False
+    for ln in lines:
+        s = ln.strip()
+        if s.startswith("## 验收标准"):
+            in_sec = True
+            continue
+        if in_sec:
+            if s.startswith("## "):
+                break
+            if s.startswith("- "):
+                out.append(s[2:].strip())
+    if not out:
+        out = ["实现满足需求，且测试阶段 PASS"]
+    return out

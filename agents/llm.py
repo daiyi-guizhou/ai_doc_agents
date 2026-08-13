@@ -13,7 +13,7 @@ class LLM:
     """所有 LLM 后端统一的极简协议。"""
 
     def complete(self, system: str, user: str, temperature: float = 0.3,
-                 max_tokens: int = 2000) -> str:
+                 max_tokens: int = 2000, role: "str | None" = None) -> str:
         raise NotImplementedError
 
 
@@ -26,7 +26,7 @@ class OpenAICompatibleLLM(LLM):
         self.model = model
 
     def complete(self, system: str, user: str, temperature: float = 0.3,
-                 max_tokens: int = 2000) -> str:
+                 max_tokens: int = 2000, role: "str | None" = None) -> str:
         url = self.base_url + "/v1/chat/completions"
         payload = {
             "model": self.model,
@@ -53,13 +53,17 @@ class OpenAICompatibleLLM(LLM):
 
 
 class MockLLM(LLM):
-    """离线兜底：不调用任何模型，返回结构化模拟产出，用于验证编排/生命周期。"""
+    """离线兜底：不调用任何模型，返回结构化模拟产出，用于验证编排/生命周期。
+
+    按角色（role）确定性分支，避免依赖 system/user 里的模糊子串匹配——
+    累积上下文里会出现『文档撰写』『验证』等字样，模糊匹配会把后续阶段的
+    mock 产出全部误判成 documenter/verifier，导致记录错乱。
+    """
 
     def complete(self, system: str, user: str, temperature: float = 0.3,
-                 max_tokens: int = 2000) -> str:
-        prompt_head = system.strip().splitlines()[0] if system.strip() else "(无提示词)"
+                 max_tokens: int = 2000, role: "str | None" = None) -> str:
         # 写文档的 agent：产出一篇符合 doclint 规则的受治理文档（供校验闸门使用）
-        if "文档撰写" in system or "角色：documenter" in user or "documenter" in user:
+        if role == "documenter":
             today = date.today().isoformat()
             return (
                 f"---\n"
@@ -80,9 +84,24 @@ class MockLLM(LLM):
                 f"- `add(task)` 新增；`done(id)` 完成；`list()` 列出\n\n"
                 f"相关框架设计：[[design/multi-agent-pod-framework|多 Agent Pod 框架设计]]\n"
             )
+        # 验证阶段：逐项核验验收标准（从任务文本中的 ACCEPT 块解析），给出可追溯的 PASS
+        if role == "verifier":
+            import re as _re
+            crit = []
+            m = _re.search(r"ACCEPT:(.*?)ENDACCEPT", user, _re.DOTALL)
+            if m:
+                crit = _re.findall(r"^- (.+)$", m.group(1), _re.MULTILINE)
+            if not crit:
+                crit = ["实现满足需求且测试阶段 PASS"]
+            checks = "\n".join(f"- [PASS] {c}" for c in crit)
+            return (
+                "PASS\n\n"
+                "# 验证报告（需求可追溯）\n\n"
+                "## 验收标准逐项核验\n" + checks + "\n\n"
+                "## 结论\n上述验收标准均已满足，测试阶段 PASS，需求已被实现覆盖，"
+                "可进入复盘阶段。\n"
+            )
         return (
-            f"[MOCK] 角色首行提示词：{prompt_head[:70]}\n"
-            f"[MOCK] 收到任务：{user.strip()[:200]}\n"
-            f"[MOCK] 本阶段产出（模拟）：已基于上述上下文完成本阶段交付物，"
+            f"[MOCK] 角色={role or '?'} 产出（模拟）：已基于上述上下文完成本阶段交付物，"
             f"结论为 PASS，结果可进入下一阶段。\n"
         )

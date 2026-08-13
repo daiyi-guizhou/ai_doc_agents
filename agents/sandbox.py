@@ -61,6 +61,24 @@ class Sandbox:
         with open(path, encoding="utf-8") as f:
             return f.read()
 
+    def edit_file(self, rel: str, old: str, new: str, occurrence: str = "first") -> str:
+        """定点替换文件中的片段：先读、断言 old 存在、再写回。改既有文件更安全。"""
+        path = self._safe(rel)
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"沙箱内无此文件: {rel}")
+        text = open(path, encoding="utf-8").read()
+        if old == "" or old not in text:
+            raise ValueError(f"edit_file 未找到待替换片段（old 不匹配）: {old[:60]!r}")
+        if occurrence == "all":
+            count = text.count(old)
+            new_text = text.replace(old, new)
+        else:
+            count = 1
+            new_text = text.replace(old, new, 1)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(new_text)
+        return f"已编辑 {rel}（替换 {count} 处）"
+
     def list_dir(self, rel: str = ".") -> str:
         path = self._safe(rel)
         if not os.path.isdir(path):

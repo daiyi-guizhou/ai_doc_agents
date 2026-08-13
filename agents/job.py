@@ -21,6 +21,8 @@ class Job:
         self.error = None
         self.stages = []        # [{idx, label, role, ts, output}]
         self.log = []           # 过程日志（含回退记录）
+        self.project_root = project_root   # 被开发的后端项目根（可能为 None）
+        self.git = None         # git 检查点信息（orchestrator 填充）
         self.created = datetime.now().isoformat(timespec="seconds")
         self.dir = os.path.join(runs_root, self.job_id)
         os.makedirs(self.dir, exist_ok=True)
@@ -68,6 +70,8 @@ class Job:
             "state": self.state,
             "error": self.error,
             "created": self.created,
+            "project_root": self.project_root,
+            "git": self.git,
             "stages": [
                 {k: s[k] for k in ("idx", "label", "role", "ts")} for s in self.stages
             ],

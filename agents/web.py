@@ -58,6 +58,7 @@ class Session:
         self.job_error = None
         self.running = False
         self.clarifier = Clarifier(llm)
+        self.project = _DEFAULTS.get("project")   # 本会话绑定的后端项目（可在「开始工作」时指定）
         # 开场白
         opening = self.clarifier.start()
         self.messages.append({"role": "assistant", "text": opening})
@@ -71,8 +72,12 @@ class Session:
                 self.title = text.strip()[:24]
             return self.clarifier.pending, self.clarifier.done
 
-    def start_work(self):
+    def start_work(self, project=None):
         with self.lock:
+            if project:
+                set_project_root(project)
+                _DEFAULTS["project"] = get_project_root() if project else None
+            self.project = _DEFAULTS.get("project")
             spec = self.clarifier.finalize()
             self.requirement_path = _write_requirement(self.id, self.title, spec)
             self.running = True
@@ -98,15 +103,16 @@ class Session:
                 job = self.job
                 return {"state": job.state, "error": job.error,
                         "stages": job.stages, "dir": job.dir,
-                        "job_id": job.job_id, "requirement_path": self.requirement_path}
+                        "job_id": job.job_id, "requirement_path": self.requirement_path,
+                        "project": self.project}
             if self.running:
                 return {"state": "running", "error": self.job_error,
                         "stages": [], "dir": None, "job_id": None,
-                        "requirement_path": self.requirement_path}
+                        "requirement_path": self.requirement_path, "project": self.project}
             return {"state": "error" if self.job_error else "idle",
                     "error": self.job_error,
                     "stages": [], "dir": None, "job_id": None,
-                    "requirement_path": self.requirement_path}
+                    "requirement_path": self.requirement_path, "project": self.project}
 
 
 def _new_session(llm):
@@ -211,9 +217,10 @@ class Handler(BaseHTTPRequestHandler):
                                  "messages": sess.messages})
                 return
             if sub == "/start":
-                path = sess.start_work()
+                path = sess.start_work(body.get("project"))
                 self._send_json({"requirement_path": path,
-                                 "message": "需求文档已写入，任务已启动"})
+                                 "message": "需求文档已写入，任务已启动",
+                                 "project": sess.project})
                 return
             self._send_json({"error": "unknown subpath"}, 404)
             return

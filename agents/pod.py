@@ -36,7 +36,7 @@ class Pod:
         if context:
             system += "\n\n# 任务上下文（前序阶段产出，逐步累积）\n" + context
 
-        output = self.llm.complete(system=system, user=task)
+        output = self.llm.complete(system=system, user=task, role=self.role)
 
         if sandbox is None:
             return output
@@ -61,6 +61,7 @@ class Pod:
             system=system + "\n\n# 工具执行结果（沙箱内真实发生）\n" + exec_record,
             user="请基于上方真实执行结果，给出本阶段最终交付物小结，"
                  "并在开头明确给出 通过 / 失败（或 PASS/FAIL）结论。",
+            role=self.role,
         )
         return final.strip() + "\n\n" + exec_record
 
