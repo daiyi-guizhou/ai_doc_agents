@@ -11,6 +11,7 @@
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,24 @@ import tempfile
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DOCLINT = os.path.join(_ROOT, "tools", "doclint.py")
+
+
+def _unwrap_fence(text: str) -> str:
+    """剥离开头可能出现的 ``` 代码块包裹（真实 LLM 常把整篇文档包进 ```markdown）。
+
+    仅当文本以 ``` 起始、且末尾也有 ``` 时才剥离，取最外层之间的内容；
+    不影响正常文档（人类维护的文档不会以代码块包裹整篇）。
+    """
+    s = text.lstrip("\ufeff").lstrip("\n")
+    if not s.startswith("```"):
+        return text
+    nl = s.find("\n")
+    if nl == -1:
+        return text
+    last = s.rfind("```")
+    if last <= nl:
+        return text
+    return s[nl + 1:last].rstrip("\n") + "\n"
 
 
 class DocLintResult:
@@ -57,6 +76,8 @@ class DocLint:
         """把 text 当作单篇文档校验，返回 DocLintResult。"""
         if not os.path.isfile(self.doclint_path):
             return DocLintResult(False, [], [f"doclint 不存在: {self.doclint_path}"], "")
+        # 真实 LLM 可能把整篇文档包进 ``` 代码块，先剥离外层包裹再校验
+        text = _unwrap_fence(text)
         d = tempfile.mkdtemp(prefix="doclint_")
         try:
             path = os.path.join(d, filename)

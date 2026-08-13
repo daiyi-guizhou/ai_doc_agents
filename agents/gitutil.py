@@ -41,12 +41,27 @@ def head_commit(root):
     return out.strip() if rc == 0 else None
 
 
+def _primary_branch(root):
+    """返回仓库主干分支名：优先 master，其次 main，都没有则退回当前分支。"""
+    for name in ("master", "main"):
+        rc, out, _ = _run(root, ["rev-parse", "--verify", f"refs/heads/{name}"])
+        if rc == 0 and out.strip():
+            return name
+    return current_branch(root)
+
+
 def checkpoint(root, job_id):
-    """在 project 上建立安全检查点：切出 agent-<jobid> 分支（原分支保持干净）。"""
+    """在 project 上建立安全检查点：从主干切出 agent-<jobid> 分支（主干保持干净）。
+
+    始终基于主干（master/main）切分支，避免因上次失败运行把仓库留在某个
+    agent 分支上而导致 agent 分支嵌套；强制切回主干也会丢弃上次遗留的未提交改动。
+    """
     if _disabled() or not is_git_repo(root):
         return {"ok": True, "kind": "none", "branch": None,
                 "base_commit": None, "base_branch": None}
-    base_branch = current_branch(root)
+    base_branch = _primary_branch(root)
+    # 强制切回主干（丢弃可能存在的上次失败遗留改动），保证 agent 分支从主干拉出
+    _run(root, ["checkout", "-f", base_branch])
     base_commit = head_commit(root)
     branch = f"agent-{job_id}"
     _run(root, ["branch", "-D", branch])          # 重跑时清掉旧分支
@@ -57,6 +72,14 @@ def checkpoint(root, job_id):
                 "error": err.strip()}
     return {"ok": True, "kind": "git", "branch": branch,
             "base_commit": base_commit, "base_branch": base_branch}
+
+
+def restore(root, base_branch):
+    """失败时把工作树强制还原回主干（丢弃 agent 分支上的未提交改动）；agent 分支保留供排查。"""
+    if not base_branch:
+        return {"ok": False, "error": "无 base_branch"}
+    rc, _, err = _run(root, ["checkout", "-f", base_branch])
+    return {"ok": rc == 0, "error": (err.strip() if rc != 0 else "")}
 
 
 def commit(root, message):

@@ -49,6 +49,9 @@ ORDER = [r for r, _ in STAGES]
 GATE_ROLES = {"tester", "deployer", "verifier"}   # 门禁阶段
 ROLLBACK_TARGET = "developer"                       # 门禁失败回退点
 MAX_ITER = 16
+# 护栏：非门禁/非文档闸门阶段连续重复超过此次数，强制推进到下一阶段，
+# 避免真实 LLM 卡死在同一阶段烧光迭代次数。
+MAX_SAME_ROLE = 2
 
 # 拥有真实执行能力（沙箱）的角色
 SANDBOX_ROLES = {"developer", "tester"}
@@ -145,7 +148,7 @@ class Orchestrator:
 
     @staticmethod
     def _build_decision_instr(order):
-        return _DECISION_INSTR.format(roles=" / ".join(order))
+        return _DECISION_INSTR.replace("{roles}", " / ".join(order))
 
     # ---------------- 决策：真实 LLM ----------------
     def _decide(self, requirement, ctx, last_role, last_output, last_gate_ok, order, role_label):
@@ -268,6 +271,7 @@ class Orchestrator:
         seq = 0
         verify_passed = False
         iters = 0
+        same_streak = 0                 # 同阶段连续重复计数（护栏用）
         force_redo_role = None          # doclint 闸门触发：强制重做某角色
         doclint_retries = {}            # role -> 连续不通过次数
 
@@ -295,7 +299,19 @@ class Orchestrator:
                     action, role = dec["action"], dec.get("role")
                 redo = False
 
-            # 2) 安全网：门禁 FAIL 强制回退，覆盖模型决策（确保「活干好」）
+            # 2) 护栏：非门禁/非文档闸门阶段连续重复过多 → 强制推进，避免真实 LLM 卡死
+            if role == last_role and last_role not in (GATE_ROLES | DOCLINT_ROLES):
+                same_streak += 1
+            else:
+                same_streak = 0
+            if same_streak > MAX_SAME_ROLE:
+                idx = order.index(last_role) if last_role in order else -1
+                nxt = order[(idx + 1) % len(order)] if idx >= 0 else order[0]
+                action, role = "next", nxt
+                same_streak = 0
+                job.note(f"同阶段连续超过 {MAX_SAME_ROLE} 次，强制推进到：{role_label[nxt]}")
+
+            # 3) 安全网：门禁 FAIL 强制回退，覆盖模型决策（确保「活干好」）
             if last_role in GATE_ROLES and last_gate_ok is False:
                 action, role = "rollback", ROLLBACK_TARGET
                 redo = True
@@ -407,6 +423,13 @@ class Orchestrator:
         if (job.state == "done" and project_root and use_sandbox
                 and job.git and job.git.get("ok") and job.git.get("kind") == "git"):
             self._land_project(job, project_root, requirement, acceptance)
+        elif (job.state != "done" and project_root and use_sandbox
+              and job.git and job.git.get("kind") == "git"):
+            # 失败时把工作树还原回主干（agent 分支保留供排查），避免停留在悬空分支上
+            res = gitutil.restore(project_root, job.git.get("base_branch"))
+            if res.get("ok"):
+                job.note(f"任务未成功，工作树已还原回 {job.git.get('base_branch')}"
+                         f"（agent 分支保留供排查）")
 
         job.save()
         return job

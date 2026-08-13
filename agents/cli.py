@@ -180,7 +180,6 @@ def main(argv=None):
         return 1
 
     if args.mock:
-        import os
         os.environ["AGENTS_MOCK"] = "1"
     if getattr(args, "project", None):
         set_project_root(args.project)

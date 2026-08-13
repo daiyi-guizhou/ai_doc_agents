@@ -27,16 +27,30 @@ class OpenAICompatibleLLM(LLM):
 
     def complete(self, system: str, user: str, temperature: float = 0.3,
                  max_tokens: int = 2000, role: "str | None" = None) -> str:
+        msg = self.chat(
+            [{"role": "system", "content": system},
+             {"role": "user", "content": user}],
+            tools=None, temperature=temperature, max_tokens=max_tokens)
+        return msg.get("content") or ""
+
+    def chat(self, messages: list, tools: "list | None" = None,
+             tool_choice: str = "auto", temperature: float = 0.3,
+             max_tokens: int = 2000) -> dict:
+        """底层 chat：支持 tools / 多轮 tool 消息，返回 API 的原始 assistant message 字典。
+
+        真实 LLM 的 developer/tester 走此接口使用 OpenAI 标准 tool-calling 协议，
+        由模型可靠地产出结构化工具调用（而非依赖模型吐自定义 fence 文本）。
+        """
         url = self.base_url + "/v1/chat/completions"
         payload = {
             "model": self.model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
+            "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=data, method="POST")
         req.add_header("Content-Type", "application/json")
@@ -49,7 +63,7 @@ class OpenAICompatibleLLM(LLM):
             raise RuntimeError(f"LLM 请求失败 [{e.code}]: {body[:500]}") from e
         except urllib.error.URLError as e:
             raise RuntimeError(f"LLM 连接失败: {e.reason}") from e
-        return obj["choices"][0]["message"]["content"]
+        return obj["choices"][0]["message"]
 
 
 class MockLLM(LLM):

@@ -49,6 +49,89 @@ TOOL_INSTRUCTIONS = """\
 优先用 edit_file 改既有文件（先 read_file 再 edit_file），避免整文件覆写丢失内容。"""
 
 
+# OpenAI 标准 tool-calling 协议所用的工具 schema（真实 LLM 走此结构化通道，
+# 不再依赖模型吐自定义 ```actions fence 文本——后者各模型格式不一、易解析失败）。
+TOOL_SCHEMAS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "读取沙箱内现有文件内容（改之前务必先读）。path 相对沙箱根。",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string",
+                                        "description": "相对沙箱根的文件路径"}},
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "整文件覆写（适合新建文件）。path 相对沙箱根，content 为文件全文。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "content": {"type": "string", "description": "文件全文"},
+                },
+                "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit_file",
+            "description": ("定点替换文件中某段文本（适合改既有文件，安全、不易丢内容）。"
+                            "old 须与文件内容精确一致；new 为替换后内容；"
+                            "occurrence 为 first（替换首个匹配）或 all（全部）。"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "old": {"type": "string", "description": "待替换的精确片段"},
+                    "new": {"type": "string", "description": "替换后的新片段"},
+                    "occurrence": {"type": "string", "enum": ["first", "all"],
+                                   "description": "替换第一个匹配还是全部，默认 first"},
+                },
+                "required": ["path", "old", "new"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_dir",
+            "description": "列出沙箱内某目录的文件（path 相对沙箱根，默认 '.'）。",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run",
+            "description": ("在沙箱内执行一条命令（白名单：python/node/pytest/git 等）。"
+                            "cmd 为命令及参数列表，timeout 为超时秒数。"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cmd": {"type": "array", "items": {"type": "string"},
+                            "description": "命令及参数，如 [\"python\",\"tests/run_tests.py\"]"},
+                    "timeout": {"type": "integer", "description": "超时秒数，默认 60"},
+                },
+                "required": ["cmd"],
+            },
+        },
+    },
+]
+
+
 def parse_actions(text: str):
     """从模型产出中提取动作列表；无则返 []。"""
     m = ACTION_FENCE.search(text)
